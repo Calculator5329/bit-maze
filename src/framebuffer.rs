@@ -1,24 +1,29 @@
 //! Pure software framebuffer rendering — the headless-testable seam.
 //!
 //! [`draw`] fills a flat `u32` pixel buffer (`0x00RR_GGBB`, the layout minifb
-//! expects) from a [`World`]. It does **no** windowing and touches no OS state,
-//! so it is fully unit-testable without a display: build a small [`World`], call
-//! [`draw`] into a `Vec<u32>`, and assert individual pixels are the wall, floor,
-//! or player color. The minifb window shell (`crate::window`) is a thin layer
+//! expects) from a [`World`], a [`Sprites`] set, and a [`Palette`]. It does
+//! **no** windowing and touches no OS state, so it is fully unit-testable
+//! without a display: build a small [`World`], call [`draw`] into a `Vec<u32>`,
+//! and assert individual pixels are the ink or paper color for the role that
+//! covers that tile. The minifb window shell (`crate::window`) is a thin layer
 //! that only allocates the buffer, calls this, and blits.
 //!
-//! Each tile is rendered as a solid `tile_px`×`tile_px` block. In Phase 6 the
-//! per-tile solid-color fill here is what gets replaced by 1-bit sprite blits;
-//! the window shell and this function's signature stay put.
+//! Each tile is rendered by **blitting a 1-bit sprite through the palette**
+//! (Phase 6), replacing the old solid-color fill:
+//! - a wall tile blits the wall sprite (ink → [`Palette::wall_ink`], paper →
+//!   [`Palette::wall_paper`]);
+//! - a floor tile blits the floor sprite (ink → `floor_ink`, paper →
+//!   `floor_paper`);
+//! - the player's tile blits the floor sprite first, then composites the player
+//!   sprite over it (ink → `player_ink`, paper → **transparent**, so the floor
+//!   shows through).
+//!
+//! Sprites are scaled to `tile_px` with nearest-neighbor sampling, so any
+//! sprite size works at any tile size (an 8×8 sprite fills a 24-px tile, a 4-px
+//! tile samples every other sprite pixel).
 
+use crate::sprite::{Palette, Sprite, Sprites};
 use crate::world::World;
-
-/// Wall tile color (`0x00RR_GGBB`): a dim slate blue.
-pub const COLOR_WALL: u32 = 0x0025_2B48;
-/// Floor tile color: near-black.
-pub const COLOR_FLOOR: u32 = 0x000A_0A0F;
-/// Player color: bright amber.
-pub const COLOR_PLAYER: u32 = 0x00FF_B300;
 
 /// Framebuffer width in pixels for a level of `width` tiles at `tile_px` each.
 pub fn fb_width(world: &World, tile_px: usize) -> usize {
@@ -30,52 +35,76 @@ pub fn fb_height(world: &World, tile_px: usize) -> usize {
     world.level.height as usize * tile_px
 }
 
-/// Fill `fb` with the current world: walls in [`COLOR_WALL`], floor in
-/// [`COLOR_FLOOR`], and the player's tile in [`COLOR_PLAYER`]. `fb` must be at
-/// least `fb_w * fb_h` long; `fb_w`/`fb_h` are the buffer's pixel dimensions and
-/// should be `tile_px` times the level's tile dimensions (see [`fb_width`] /
-/// [`fb_height`]). Pure and deterministic — no I/O, no windowing.
-pub fn draw(world: &World, fb: &mut [u32], fb_w: usize, fb_h: usize, tile_px: usize) {
+/// Fill `fb` with the current world by blitting a 1-bit sprite per tile through
+/// `palette`. `fb` must be at least `fb_w * fb_h` long; `fb_w`/`fb_h` are the
+/// buffer's pixel dimensions and should be `tile_px` times the level's tile
+/// dimensions (see [`fb_width`] / [`fb_height`]). Pure and deterministic — no
+/// I/O, no windowing.
+pub fn draw(
+    world: &World,
+    fb: &mut [u32],
+    fb_w: usize,
+    fb_h: usize,
+    tile_px: usize,
+    sprites: &Sprites,
+    palette: &Palette,
+) {
+    let mut canvas = Canvas { fb, w: fb_w, h: fb_h, tile_px };
     for ty in 0..world.level.height {
         for tx in 0..world.level.width {
-            let color = if tx == world.px && ty == world.py {
-                COLOR_PLAYER
-            } else if world.level.get_bit(0, tx, ty) {
-                COLOR_WALL
+            let is_player = tx == world.px && ty == world.py;
+            let is_wall = world.level.get_bit(0, tx, ty);
+            if is_wall {
+                canvas.blit(tx, ty, &sprites.wall, palette.wall_ink, Some(palette.wall_paper));
             } else {
-                COLOR_FLOOR
-            };
-            fill_tile(fb, fb_w, fb_h, tx as usize, ty as usize, tile_px, color);
+                // Floor base under everything that isn't a wall.
+                canvas.blit(tx, ty, &sprites.floor, palette.floor_ink, Some(palette.floor_paper));
+                if is_player {
+                    // Player composited over the floor: paper is transparent.
+                    canvas.blit(tx, ty, &sprites.player, palette.player_ink, None);
+                }
+            }
         }
     }
 }
 
-/// Paint one `tile_px`×`tile_px` block at tile `(tx, ty)`, clipped to the
-/// buffer so a short `fb` can never panic.
-fn fill_tile(
-    fb: &mut [u32],
-    fb_w: usize,
-    fb_h: usize,
-    tx: usize,
-    ty: usize,
+/// A mutable view of the pixel buffer plus its geometry, so blitting is one
+/// method call per tile (and clippy stays happy about argument counts).
+struct Canvas<'a> {
+    fb: &'a mut [u32],
+    w: usize,
+    h: usize,
     tile_px: usize,
-    color: u32,
-) {
-    let x0 = tx * tile_px;
-    let y0 = ty * tile_px;
-    for dy in 0..tile_px {
-        let py = y0 + dy;
-        if py >= fb_h {
-            break;
-        }
-        let row = py * fb_w;
-        for dx in 0..tile_px {
-            let px = x0 + dx;
-            if px >= fb_w {
+}
+
+impl Canvas<'_> {
+    /// Blit `sprite` into the tile block at `(tx, ty)`, scaled to `tile_px` with
+    /// nearest-neighbor sampling. Ink pixels are painted `ink`; paper pixels are
+    /// painted `paper` when `Some`, or **skipped** (transparent) when `None`.
+    /// Clipped to the buffer so a short `fb` can never panic.
+    fn blit(&mut self, tx: u8, ty: u8, sprite: &Sprite, ink: u32, paper: Option<u32>) {
+        let x0 = tx as usize * self.tile_px;
+        let y0 = ty as usize * self.tile_px;
+        for dy in 0..self.tile_px {
+            let py = y0 + dy;
+            if py >= self.h {
                 break;
             }
-            if let Some(slot) = fb.get_mut(row + px) {
-                *slot = color;
+            // Nearest-neighbor sample of the sprite row.
+            let sy = (dy * sprite.height as usize / self.tile_px) as u8;
+            let row = py * self.w;
+            for dx in 0..self.tile_px {
+                let px = x0 + dx;
+                if px >= self.w {
+                    break;
+                }
+                let sx = (dx * sprite.width as usize / self.tile_px) as u8;
+                let color = if sprite.get(sx, sy) { Some(ink) } else { paper };
+                if let Some(color) = color {
+                    if let Some(slot) = self.fb.get_mut(row + px) {
+                        *slot = color;
+                    }
+                }
             }
         }
     }
@@ -105,57 +134,61 @@ mod tests {
     }
 
     #[test]
-    fn draw_paints_walls_floor_and_player() {
+    fn draw_blits_sprites_through_the_palette() {
         let world = sample_world();
         assert_eq!((world.px, world.py), (0, 1)); // sanity: spawn on first floor
 
-        let tile_px = 4;
+        let sprites = Sprites::default();
+        let pal = Palette::DEFAULT;
+        // tile_px == sprite dimension so sampling is 1:1 (dx -> sx directly).
+        let tile_px = 8;
         let fb_w = fb_width(&world, tile_px);
         let fb_h = fb_height(&world, tile_px);
         let mut fb = vec![0u32; fb_w * fb_h];
 
-        draw(&world, &mut fb, fb_w, fb_h, tile_px);
+        draw(&world, &mut fb, fb_w, fb_h, tile_px, &sprites, &pal);
 
-        // Helper: sample the center pixel of tile (tx, ty).
-        let center = |tx: usize, ty: usize| {
-            let px = tx * tile_px + tile_px / 2;
-            let py = ty * tile_px + tile_px / 2;
+        // Sample the pixel at sprite-local (sx, sy) inside tile (tx, ty).
+        let px_at = |tx: usize, ty: usize, sx: usize, sy: usize| {
+            let px = tx * tile_px + sx;
+            let py = ty * tile_px + sy;
             fb[py * fb_w + px]
         };
 
-        // Top row is walls.
-        assert_eq!(center(0, 0), COLOR_WALL);
-        assert_eq!(center(1, 0), COLOR_WALL);
-        assert_eq!(center(2, 0), COLOR_WALL);
-        // Bottom-row floor tiles (not the player's).
-        assert_eq!(center(1, 1), COLOR_FLOOR);
-        assert_eq!(center(2, 1), COLOR_FLOOR);
-        // Player tile at (0,1) wins over the floor underneath.
-        assert_eq!(center(0, 1), COLOR_PLAYER);
+        // Wall tile (0,0): the wall sprite's top-left pixel is ink (row0=0xFF),
+        // and its row-3 pixel is paper (mortar line, all 0).
+        assert_eq!(px_at(0, 0, 0, 0), pal.wall_ink, "wall ink pixel");
+        assert_eq!(px_at(0, 0, 0, 3), pal.wall_paper, "wall paper (mortar) pixel");
+
+        // Plain floor tile (1,1): center dot is ink, corner is paper.
+        // Floor sprite has ink at (3,3)/(4,3)/(3,4)/(4,4) only.
+        assert_eq!(px_at(1, 1, 3, 3), pal.floor_ink, "floor dot ink pixel");
+        assert_eq!(px_at(1, 1, 0, 0), pal.floor_paper, "floor paper pixel");
+
+        // Player tile (0,1): the player sprite's ink shows player_ink; where the
+        // player sprite is paper (transparent), the floor beneath shows through.
+        // Player sprite (0,0) is paper -> floor paper shows. Player (2,0) is ink.
+        assert!(Sprite::default_player().get(2, 0), "sanity: player (2,0) is ink");
+        assert_eq!(px_at(0, 1, 2, 0), pal.player_ink, "player ink pixel");
+        assert!(!Sprite::default_player().get(0, 0), "sanity: player (0,0) is paper");
+        assert_eq!(px_at(0, 1, 0, 0), pal.floor_paper, "floor shows through player paper");
     }
 
     #[test]
-    fn every_pixel_of_a_tile_is_filled() {
+    fn every_pixel_is_painted_and_scaling_covers_the_tile() {
+        // A non-8 tile_px exercises nearest-neighbor scaling and full coverage.
         let world = sample_world();
+        let sprites = Sprites::default();
+        let pal = Palette::DEFAULT;
         let tile_px = 5;
         let fb_w = fb_width(&world, tile_px);
         let fb_h = fb_height(&world, tile_px);
         let mut fb = vec![0xDEAD_BEEFu32; fb_w * fb_h]; // poison to catch gaps
 
-        draw(&world, &mut fb, fb_w, fb_h, tile_px);
+        draw(&world, &mut fb, fb_w, fb_h, tile_px, &sprites, &pal);
 
-        // No poisoned pixel survives: draw covers the whole buffer.
-        assert!(fb.iter().all(|&p| p != 0xDEAD_BEEF));
-
-        // Every pixel inside the player's tile block (tile (0,1)) is the player
-        // color.
-        let (tile_x, tile_y) = (0usize, 1usize);
-        for dy in 0..tile_px {
-            for dx in 0..tile_px {
-                let px = tile_x * tile_px + dx;
-                let py = tile_y * tile_px + dy;
-                assert_eq!(fb[py * fb_w + px], COLOR_PLAYER);
-            }
-        }
+        // No poisoned pixel survives: every tile fully paints its block (the
+        // player's transparent paper still lands on the floor drawn first).
+        assert!(fb.iter().all(|&p| p != 0xDEAD_BEEF), "draw covers the whole buffer");
     }
 }

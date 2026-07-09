@@ -10,7 +10,9 @@
 
 use std::process::ExitCode;
 
-use bitmaze::{asm, check, dump, format::Level, newlevel, play, window, world::World};
+use bitmaze::{
+    asm, check, dump, format::Level, newlevel, play, sprite, sprite::Sprites, window, world::World,
+};
 
 const USAGE: &str = "\
 bit-maze — a game whose world is binary
@@ -25,6 +27,8 @@ COMMANDS:
     check <level.bm>            validate the file, exit nonzero if invalid
     asm   <in.asm> <out.bin>    assemble a script to raw bytecode
     new   <w> <h> <out.bm>      generate a sample walls-only level
+    sprite <file.spr>           dump a 1-bit sprite as ASCII (# ink / . paper)
+    sprite gen <dir>            write the three default sprites into <dir>
 ";
 
 fn main() -> ExitCode {
@@ -41,6 +45,7 @@ fn main() -> ExitCode {
         "check" => return cmd_check(rest),
         "asm" => cmd_asm(rest),
         "new" => cmd_new(rest),
+        "sprite" => cmd_sprite(rest),
         "-h" | "--help" | "help" => {
             print!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -99,7 +104,44 @@ fn cmd_play(args: &[String]) -> Result<(), String> {
         play::run(&mut world, stdin.lock(), stdout.lock())
             .map_err(|e| format!("play loop I/O error: {e}"))
     } else {
-        window::run(&mut world, window::TILE_PX)
+        // Load role sprites from `sprites/` (per-sprite fallback to built-ins),
+        // then blit them through the default palette in the window.
+        let (sprites, notes) = Sprites::load_from_dir(sprite::SPRITE_DIR);
+        for note in &notes {
+            eprintln!("sprite: {note}");
+        }
+        window::run(&mut world, window::TILE_PX, &sprites, &sprite::Palette::DEFAULT)
+    }
+}
+
+/// `sprite` — the sprite counterpart of `dump`/`new`. With one `.spr` path it
+/// prints the sprite as ASCII art (the headless verification tool). With
+/// `gen <dir>` it writes the three compiled-in default sprites into `<dir>`.
+fn cmd_sprite(args: &[String]) -> Result<(), String> {
+    match args {
+        [sub, dir] if sub == "gen" => {
+            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {dir}: {e}"))?;
+            let defaults = [
+                ("wall.spr", sprite::Sprite::default_wall()),
+                ("floor.spr", sprite::Sprite::default_floor()),
+                ("player.spr", sprite::Sprite::default_player()),
+            ];
+            for (name, spr) in defaults {
+                let path = format!("{dir}/{name}");
+                std::fs::write(&path, spr.to_bytes())
+                    .map_err(|e| format!("cannot write {path}: {e}"))?;
+                println!("wrote {path} ({}x{})", spr.width, spr.height);
+            }
+            Ok(())
+        }
+        [path] => {
+            let data = std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?;
+            let spr = sprite::Sprite::from_bytes(&data).map_err(|e| format!("{path}: {e}"))?;
+            println!("sprite: {}x{}  '#' = ink, '.' = paper", spr.width, spr.height);
+            print!("{}", spr.to_ascii());
+            Ok(())
+        }
+        _ => Err("usage: bitmaze sprite <file.spr> | bitmaze sprite gen <dir>".to_string()),
     }
 }
 

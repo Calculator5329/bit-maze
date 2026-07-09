@@ -183,3 +183,50 @@ current count is 221. 17 new tests (door round-trip, every mnemonic, push
 sizing, hex/decimal, forward/backward jumps, VM execution, all error cases, the
 line guard); all 49 prior tests still green (66 total). `cargo build`,
 `cargo clippy --all-targets` clean.
+
+## Phase 6 — 1-bit sprites + palette
+
+Replaced the per-tile solid-color fill in `framebuffer::draw` with
+**bitplane-native 1-bit sprite blits** through a palette, keeping the aesthetic
+total: sprites are themselves hex-editable binary files, no `image` crate, pure
+`std`. Added the `.spr` format (`src/sprite.rs`, `docs/SPRITE.md`), designed to
+mirror `.bm`: a 5-byte header (`magic "SP"` `0x53 0x50`, `version` 1, `width`,
+`height` — both `u8` 1..=255), then exactly `ceil(width*height/8)` packed pixel
+bytes, **MSB-first, row-major** — the same bit convention and little-endian +
+magic-check discipline as the level planes (byte-swapped `"PS"`, unknown version,
+zero dimension, and wrong-length files all rejected loudly, never panicking).
+Bit `1` = ink, bit `0` = paper.
+
+The `Palette` (plain struct, `Palette::DEFAULT`) maps the two 1-bit values to
+`0x00RR_GGBB` colors **per tile role**: wall ink/paper, floor ink/paper, and
+player ink — the player's paper is **transparent**. `draw` now blits one sprite
+per tile, scaled to `tile_px` with nearest-neighbor sampling (any sprite size at
+any tile size): a wall tile blits the wall sprite, a floor tile the floor
+sprite, and the player tile blits floor then composites the player sprite over
+it so the floor shows through the `@`'s gaps. `draw` stays **pure and headless**
+(fills a `Vec<u32>`, opens no window); the blit lives in a small `Canvas` helper.
+`window::run` gained `&Sprites, &Palette` params and passes them straight through
+— the window shell is otherwise unchanged, and `--term` renders ASCII as before.
+
+`bitmaze play` loads `wall.spr`/`floor.spr`/`player.spr` from `sprites/` via
+`Sprites::load_from_dir`, falling back **per-sprite** to a compiled-in default
+(`Sprite::default_wall/floor/player`) on any missing/corrupt file (noted to
+stderr) so the game always has a full set. New tooling: `bitmaze sprite
+<file.spr>` dumps a sprite as ASCII (`#` ink / `.` paper) — the headless
+verification tool, the sprite counterpart of `dump` — and `bitmaze sprite gen
+<dir>` writes the three default sprites (used to generate the committed
+`sprites/`). The defaults are hand-designed 8×8: a brick-with-mortar wall, a
+center-dot floor, and an `@`-ish player figure.
+
+10 new tests (sprite round-trip, MSB-first bit order, `from_rows`, byte-swapped
+magic / unknown version / zero dimension / wrong length / short header
+rejection, ASCII dump vs a known pattern, missing-dir fallback) plus the two
+rewritten `framebuffer` tests now assert palette colors at known sprite pixels
+(wall ink vs mortar paper, floor dot vs floor paper, player ink vs floor showing
+through transparent player paper) and full-buffer coverage under a non-1:1
+`tile_px`. All 66 prior tests still green (76 total). `cargo build`, `cargo
+clippy --all-targets` clean. Verified headless: `bitmaze sprite gen sprites`
+then `bitmaze sprite sprites/wall.spr` prints the brick pattern; `xxd
+sprites/wall.spr` shows `53 50 01 08 08 ff ee ee 00 bb bb 00 ff`. `bitmaze play`
+with no display still exits 1 with the clear "cannot open a window … use
+`--term`" message (window path unchanged); `--term` still walks `@` and quits.

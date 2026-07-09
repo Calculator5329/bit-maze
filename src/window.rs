@@ -13,6 +13,7 @@
 //! than hanging — and `bitmaze play --term` stays available as a headless path.
 
 use crate::framebuffer;
+use crate::sprite::{Palette, Sprites};
 use crate::world::{Move, World};
 use minifb::{Key, KeyRepeat, Window, WindowOptions};
 
@@ -39,10 +40,17 @@ fn key_to_move(key: Key) -> Option<Move> {
 /// each tile at `tile_px` pixels. Movement: `W/A/S/D` or the arrow keys.
 /// Quit: `Esc` or `Q`, or closing the window.
 ///
+/// Tiles are rendered by blitting `sprites` through `palette` (Phase 6).
+///
 /// Returns `Err(String)` (never hangs) if a window cannot be created — e.g. no
 /// display in a headless environment — so the caller can print it and exit
 /// nonzero. Never call this from tests.
-pub fn run(world: &mut World, tile_px: usize) -> Result<(), String> {
+pub fn run(
+    world: &mut World,
+    tile_px: usize,
+    sprites: &Sprites,
+    palette: &Palette,
+) -> Result<(), String> {
     let fb_w = framebuffer::fb_width(world, tile_px);
     let fb_h = framebuffer::fb_height(world, tile_px);
 
@@ -56,7 +64,7 @@ pub fn run(world: &mut World, tile_px: usize) -> Result<(), String> {
     // Cap the frame rate so we don't busy-spin the CPU.
     window.set_target_fps(TARGET_FPS);
 
-    let mut fb = vec![framebuffer::COLOR_FLOOR; fb_w * fb_h];
+    let mut fb = vec![palette.floor_paper; fb_w * fb_h];
 
     while window.is_open() && !window.is_key_down(Key::Escape) && !window.is_key_down(Key::Q) {
         // Edge-triggered: one step per physical key press (no auto-repeat), so
@@ -69,7 +77,7 @@ pub fn run(world: &mut World, tile_px: usize) -> Result<(), String> {
             }
         }
 
-        framebuffer::draw(world, &mut fb, fb_w, fb_h, tile_px);
+        framebuffer::draw(world, &mut fb, fb_w, fb_h, tile_px, sprites, palette);
         window
             .update_with_buffer(&fb, fb_w, fb_h)
             .map_err(|e| format!("window update failed: {e}"))?;
