@@ -1,0 +1,15 @@
+[package]
+name = "bitmaze"
+version = "0.1.0"
+edition = "2021"
+description = "A tile game where the game world is binary: bit-packed, hex-editable levels run by a tiny Rust host."
+
+[lib]
+name = "bitmaze"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bitmaze"
+path = "src/main.rs"
+
+[dependencies]
