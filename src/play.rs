@@ -58,12 +58,21 @@ pub fn run<R: BufRead, W: Write>(
             let Some(mv) = Move::from_key(c) else {
                 continue; // ignore whitespace, unknown keys
             };
-            let status = match world.step(mv) {
-                crate::world::StepResult::Moved => "moved",
-                crate::world::StepResult::Blocked => "blocked",
-                crate::world::StepResult::Idle => "idle",
+            let outcome = world.step_triggered(mv);
+            let mut status = match outcome.result {
+                crate::world::StepResult::Moved => "moved".to_string(),
+                crate::world::StepResult::Blocked => "blocked".to_string(),
+                crate::world::StepResult::Idle => "idle".to_string(),
             };
-            write!(output, "{}", frame(world, status))?;
+            if let Some(t) = outcome.trigger {
+                // A trigger fired and (may have) mutated the world — the next
+                // frame already reflects it since render reads live plane data.
+                status = format!(
+                    "{status} — trigger #{} at ({},{}) ran [{}]",
+                    t.script_id, t.x, t.y, t.halt
+                );
+            }
+            write!(output, "{}", frame(world, &status))?;
             output.flush()?;
         }
     }

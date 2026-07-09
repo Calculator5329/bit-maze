@@ -97,3 +97,53 @@ new), `cargo build` and `cargo clippy --all-targets` clean. Verified headless:
 Run headless with bitmaze play --term …` and exits 1 (no hang); `printf
 'd\nd\nq\n' | bitmaze play --term levels/first.bm` still walks `@` to (3,1) and
 quits.
+
+## Phase 4 — BitVM + triggers
+
+Implemented the BitVM stack machine (`src/vm.rs`) exactly per the ROADMAP opcode
+table and machine model, and wired the trigger plane → script table → run on
+tile-enter. The VM is a `u16` stack (max depth 64), 256 fixed bytes of scratch
+RAM, a seeded xorshift32 PRNG register (the only randomness source), and a 4096
+instruction/run budget. All caps are enforced without ever panicking: pushing
+past 64 → `StackOverflow`; 4096 instructions → `Budget` (the anti-hang guard — a
+tight `JMP -2` self-loop halts near-instantly); an unknown opcode → `BadOpcode`;
+an op needing missing operands → `StackUnderflow`; a `PUSH8/16/JMP/JZ` operand
+cut off at end of script → `Truncated`; a JMP/JZ target outside the script →
+`BadJump`. All 15 v0 opcodes are implemented at their exact bytes (0x00 NOP …
+0x61 JZ). JMP/JZ `i8` offsets are relative to the *next* instruction (so `60 FE`
+is a self-loop). Determinism is law: no floats, no host time, no host RNG.
+
+The VM reaches the world only through a small `VmHost` trait
+(`get_wall`/`set_wall`/`player_x`/`player_y`), implemented for `World` — the
+single bounds-checked chokepoint that makes out-of-range wall ops safe no-ops.
+This keeps the VM unit-testable against a trivial mock host (no window, no
+level). `World` gained a `seed` field (FNV-1a over the level bytes) and a
+`step_triggered(Move) -> StepOutcome` method: it runs the pure `step` for
+movement, then on a successful `Moved` looks up `triggers[y*w+x]`, finds the
+matching `Script`, and runs it on a fresh VM seeded from the world seed mixed
+with the plate coords. `StepOutcome { result, trigger: Option<TriggerRun> }`
+surfaces the fired trigger (id, tile, halt reason) to both front-ends, which now
+call `step_triggered` so a trigger-driven wall change is visible next frame
+(render/draw read live plane data). Firing is after-move, stateless, and
+documented (re-entering re-fires; the door script is idempotent).
+
+Demo: `levels/door.bm` (90 bytes, hand-authored) is an 8×8 room split by a wall
+divider at column 4, a pressure plate at (2,2) bound to script id 1, whose bytes
+are the ROADMAP example `10 04 10 03 32 01` (`push 4; push 3; clr_wall; halt`) —
+clearing the wall at (4,3) opens a door. `bitmaze check levels/door.bm` exits 0;
+`dump` shows the trigger plane (a lone `01` at row 2, col 2) and the script.
+`printf 'd\ns\ns\nd\nd\nd\nq\n' | bitmaze play --term levels/door.bm` walks onto
+the plate — the frame prints `trigger #1 at (2,2) ran [HALT]` and row y=3 flips
+from `#...#..#` to `#......#` (door open) — then walks `@` through (4,3) into the
+right room at (5,3).
+
+Tests: 26 new (21 VM unit + 5 trigger integration), all 23 prior still green (49
+total). VM unit tests cover every opcode (push/pop/dup/add/sub wrapping,
+get/set/clr wall incl. OOB no-op, player x/y, a known-sequence RAND determinism
+check, jmp/jz control flow) and every cap explicitly: `pushing_forever →
+StackOverflow`, `infinite JMP -2 → Budget` (completes instantly, proving no
+hang), `bad_opcode → BadOpcode`, `stack_underflow`, and `truncated_operands`.
+Integration tests load `levels/door.bm`, assert the committed file byte-matches
+its programmatic build, step onto the plate and assert (4,3) cleared, walk the
+opened door end-to-end, and confirm blocked/idle steps fire nothing.
+`cargo build`, `cargo clippy --all-targets` clean, `cargo test` all green.

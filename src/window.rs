@@ -63,7 +63,9 @@ pub fn run(world: &mut World, tile_px: usize) -> Result<(), String> {
         // discrete tile movement matches the terminal loop's feel.
         for key in window.get_keys_pressed(KeyRepeat::No) {
             if let Some(mv) = key_to_move(key) {
-                world.step(mv);
+                // Fire triggers too, so stepping on a plate mutates the walls
+                // plane; the next `draw` already reflects it (it reads live).
+                world.step_triggered(mv);
             }
         }
 

@@ -1,7 +1,7 @@
 # BitVM — the logic VM
 
-Extracted from `ROADMAP.md`. **Not implemented yet** — this is the spec for the
-Phase 4 VM. Phase 1 only stores script bytes faithfully; it never executes them.
+Extracted from `ROADMAP.md`. **Implemented in Phase 4** (`src/vm.rs`). Phase 1
+only stores script bytes faithfully; Phase 4 executes them on tile-enter.
 
 A stack machine executed per-trigger. When the player enters a tile whose
 trigger byte is nonzero, the corresponding script runs to `HALT` (or until a cap
@@ -45,3 +45,47 @@ renumbering.
 
 Unknown opcode → halt with `BadOpcode` (never crash). Any random bytes are a
 valid (if inert) script — this is what makes "mods are just files" safe.
+
+## Phase 4 implementation decisions
+
+Details fixed during implementation (all consistent with the spec above):
+
+- **Halt reasons** (`vm::Halt`, never a panic): `Halt` (hit `HALT`),
+  `EndOfScript` (pc ran off the end without `HALT` — clean), `Truncated` (an
+  operand was cut off at end of script), `BadJump` (JMP/JZ target outside the
+  script), `BadOpcode(u8)`, `StackOverflow`, `StackUnderflow`, `Budget`.
+  `Halt::is_clean()` is true only for `Halt`/`EndOfScript`.
+- **JMP/JZ offset base.** The `i8` offset is relative to the byte **after the
+  full instruction** (opcode + operand) — the address of the next instruction,
+  the usual relative-jump convention. So `JMP -2` (`60 FE`) targets itself (the
+  canonical self-loop), which the budget cap then stops. A target outside
+  `0..=len` halts with `BadJump`; landing exactly on `len` is a clean
+  end-of-script on the next tick.
+- **Budget accounting.** One budget unit per executed instruction; the run stops
+  the moment it would execute a 4097th. A tight `JMP -2` loop therefore halts
+  after exactly 4096 instructions, near-instantly (proven by a test).
+- **Stack ordering.** Binary/world ops pop right-to-left: for `x y` on the stack
+  (`y` on top), `pop()` yields `y` then `x`. `SUB` is `a - b`. The door script
+  `push 4; push 3; clr_wall` clears wall `(4,3)`.
+- **World seam.** The VM talks to the world only through the `vm::VmHost` trait
+  (`get_wall`/`set_wall`/`player_x`/`player_y`), implemented for `World`. That
+  impl is the single bounds-checked chokepoint: out-of-range `GET_WALL` reads as
+  `false`; out-of-range `SET_WALL`/`CLR_WALL` is a no-op. Coordinates are `u16`.
+- **Determinism / seeding.** `Vm::new(seed)` seeds the xorshift32 register (a `0`
+  seed is remapped to a fixed non-zero constant). `World` derives a run seed
+  (FNV-1a over the level bytes) at construction; each trigger run mixes that with
+  the plate `(x,y)` so different plates get different `RAND` streams and the same
+  plate replays identically. `RAND` pushes the low 16 bits of the next state.
+- **RAM.** The fixed 256-byte scratch buffer exists per the machine model, but no
+  v0 opcode reads or writes it yet — that arrives with a future load/store
+  opcode (Phase 7), by *adding* opcodes, not breaking these.
+
+## Trigger firing semantics (v0)
+
+- A trigger fires **after** a successful move resolves, on the tile just entered
+  (`World::step_triggered`). Blocked/idle steps fire nothing.
+- **Stateless**: re-entering the same plate fires the script again every time.
+  There is no one-shot latch in v0. Idempotent scripts (like the door, which
+  clears an already-clear wall harmlessly) are naturally safe to re-fire.
+- A zero trigger byte, or an id with no matching script-table entry, fires
+  nothing. A malformed/looping script halts via a cap and the game continues.
