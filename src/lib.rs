@@ -8,5 +8,8 @@ pub mod check;
 pub mod dump;
 pub mod format;
 pub mod newlevel;
+pub mod play;
+pub mod world;
 
 pub use format::{BmError, Level, Script};
+pub use world::{Move, StepResult, World};

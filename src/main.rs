@@ -1,7 +1,7 @@
 //! bit-maze CLI.
 //!
 //! ```text
-//! bitmaze play  <level.bm>          run the game            (Phase 3)
+//! bitmaze play  <level.bm>          play in the terminal    (Phase 2)
 //! bitmaze dump  <level.bm>          ASCII-art every plane   (the debugger)
 //! bitmaze check <level.bm>          validate all invariants
 //! bitmaze asm   <in.asm> <out.bin>  assemble a script       (Phase 5)
@@ -10,7 +10,7 @@
 
 use std::process::ExitCode;
 
-use bitmaze::{check, dump, format::Level, newlevel};
+use bitmaze::{check, dump, format::Level, newlevel, play, world::World};
 
 const USAGE: &str = "\
 bit-maze — a game whose world is binary
@@ -19,7 +19,7 @@ USAGE:
     bitmaze <command> [args]
 
 COMMANDS:
-    play  <level.bm>            run the game (not yet implemented)
+    play  <level.bm>            play in the terminal (w/a/s/d move, q quit)
     dump  <level.bm>            ASCII-art every plane + trigger map
     check <level.bm>            validate the file, exit nonzero if invalid
     asm   <in.asm> <out.bin>    assemble a script (not yet implemented)
@@ -35,7 +35,7 @@ fn main() -> ExitCode {
     let rest = &args[1..];
 
     let result = match cmd.as_str() {
-        "play" => cmd_todo("play"),
+        "play" => cmd_play(rest),
         "dump" => cmd_dump(rest),
         "check" => return cmd_check(rest),
         "asm" => cmd_todo("asm"),
@@ -59,6 +59,20 @@ fn main() -> ExitCode {
 fn cmd_todo(name: &str) -> Result<(), String> {
     println!("`{name}` not yet implemented");
     Ok(())
+}
+
+/// `play` — run the interactive terminal game loop (Phase 2). Phase 3 replaces
+/// this terminal front-end with a minifb window over the same `World`.
+fn cmd_play(args: &[String]) -> Result<(), String> {
+    let [path] = args else {
+        return Err("usage: bitmaze play <level.bm>".to_string());
+    };
+    let level = load(path)?;
+    let mut world = World::new(level).map_err(|e| format!("{path}: {e}"))?;
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    play::run(&mut world, stdin.lock(), stdout.lock())
+        .map_err(|e| format!("play loop I/O error: {e}"))
 }
 
 fn load(path: &str) -> Result<Level, String> {
