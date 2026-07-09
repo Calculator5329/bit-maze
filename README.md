@@ -27,11 +27,11 @@ cargo build --release
 ## Run
 
 ```
-bitmaze new   <w> <h> <out.bm>    generate a sample walls-only level
-bitmaze dump  <level.bm>          ASCII-art every plane + trigger map (the debugger)
-bitmaze check <level.bm>          validate header + all invariants, exit nonzero on bad
-bitmaze play  <level.bm>          run the game               (not yet implemented)
-bitmaze asm   <in.asm> <out.bin>  assemble a script          (not yet implemented)
+bitmaze new   <w> <h> <out.bm>       generate a sample walls-only level
+bitmaze dump  <level.bm>             ASCII-art every plane + trigger map (the debugger)
+bitmaze check <level.bm>             validate header + all invariants, exit nonzero on bad
+bitmaze play  [--term] <level.bm>    play the game (window, or --term for terminal)
+bitmaze asm   <in.asm> <out.bin>     assemble a script          (not yet implemented)
 ```
 
 Example:
@@ -42,8 +42,25 @@ cargo run -- check levels/first.bm
 cargo run -- new 16 10 levels/mine.bm
 ```
 
+### Playing
+
+`bitmaze play <level.bm>` opens a **graphical window** (via `minifb`): walls,
+floor, and the player render as colored tiles. Move with **W/A/S/D or the arrow
+keys**; press **Esc/Q** (or close the window) to quit. This needs a display.
+
+On a headless machine (no X11/Wayland), the window can't open — `play` prints a
+clear error and exits nonzero rather than hang. Use the terminal fallback there:
+
+```sh
+bitmaze play --term levels/first.bm      # line-buffered w/a/s/d + q, works over pipes
+printf 'd\nd\nq\n' | bitmaze play --term levels/first.bm
+```
+
+Both paths drive the exact same world/step logic; only the I/O shell differs.
+
 ## Status
 
-Phases 0 and 1 are complete: the versioned `.bm` format, its loader/validator,
-and the `dump` / `check` / `new` tools. The terminal renderer, `minifb` window,
-BitVM, and assembler are still ahead — see `ROADMAP.md`.
+Phases 0–3 are complete: the versioned `.bm` format with its loader/validator
+and the `dump` / `check` / `new` tools; a pure headless world core with terminal
+render + movement; and the `minifb` graphical window. The BitVM, assembler, and
+1-bit sprites are still ahead — see `ROADMAP.md`.

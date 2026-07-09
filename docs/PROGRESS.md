@@ -59,3 +59,41 @@ no-ops; `Move::None` is idle; a successful move reports `Moved`. `cargo build`,
 `cargo clippy --all-targets` (clean), and `cargo test` (18 tests: 11 + 7) all
 pass. Verified interactively: `printf 'd\nd\ns\nq\n' | bitmaze play
 levels/first.bm` walks `@` from (1,1) to (3,1), blocks on the wall below, quits.
+
+## Phase 3 — minifb window
+
+Added a real graphical window front-end that reuses the Phase 2 `World`/`step`
+core **unchanged**. Split into two modules along a headless-testable seam:
+
+- `src/framebuffer.rs` — a **pure** `draw(world, fb, fb_w, fb_h, tile_px)` that
+  fills a flat `u32` pixel buffer (`0x00RR_GGBB`, minifb's layout) from a
+  `World`: walls, floor, and the player's tile each get a solid color, one
+  `tile_px`×`tile_px` block per tile (clipped, so a short buffer can't panic).
+  It does no windowing and no I/O, so it is fully unit-testable without a
+  display. `fb_width`/`fb_height` derive the window size from `level dims *
+  tile_px`. In Phase 6, this per-tile solid-color fill is the single spot that
+  1-bit sprite blits replace — the signature and the window shell stay put.
+- `src/window.rs` — the thin minifb shell (only reached by the `play` command,
+  never by tests). It opens a `Window`, maps key **presses** (edge-triggered,
+  `KeyRepeat::No`) to `Move` via a pure `key_to_move` — **both** WASD and the
+  arrow keys move, `Esc`/`Q` or closing the window quits — calls `world.step`,
+  `framebuffer::draw`, and `update_with_buffer` each frame at a 60-FPS cap. If
+  `Window::new` fails (e.g. no display) it returns `Err` with a clear message
+  and the caller exits nonzero — it never hangs.
+
+`minifb 0.28` is the only new dependency (`cargo add minifb`; builds fine). This
+environment is headless, so the window can't actually be opened here; the
+terminal loop is kept reachable via a new `--term` flag on `play`
+(`bitmaze play --term <level.bm>`) for headless verification and CI. `play`
+without `--term` is the graphical path.
+
+Tests: `framebuffer` unit tests build a 3×2 world (top row walls, bottom row
+floor, player spawns at (0,1)) and assert wall/floor/player pixel colors at tile
+centers, full buffer coverage (poison-fill check), and that buffer dims are
+`tiles * tile_px`; `window` unit tests assert the WASD+arrow `key_to_move`
+mapping (no `Window` is ever created in tests). All 23 tests green (18 prior + 5
+new), `cargo build` and `cargo clippy --all-targets` clean. Verified headless:
+`bitmaze play levels/first.bm` with no display prints `cannot open a window …
+Run headless with bitmaze play --term …` and exits 1 (no hang); `printf
+'d\nd\nq\n' | bitmaze play --term levels/first.bm` still walks `@` to (3,1) and
+quits.

@@ -7,8 +7,10 @@
 pub mod check;
 pub mod dump;
 pub mod format;
+pub mod framebuffer;
 pub mod newlevel;
 pub mod play;
+pub mod window;
 pub mod world;
 
 pub use format::{BmError, Level, Script};

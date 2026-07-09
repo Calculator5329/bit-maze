@@ -1,7 +1,7 @@
 //! bit-maze CLI.
 //!
 //! ```text
-//! bitmaze play  <level.bm>          play in the terminal    (Phase 2)
+//! bitmaze play  <level.bm>          play in a window        (Phase 3)
 //! bitmaze dump  <level.bm>          ASCII-art every plane   (the debugger)
 //! bitmaze check <level.bm>          validate all invariants
 //! bitmaze asm   <in.asm> <out.bin>  assemble a script       (Phase 5)
@@ -10,7 +10,7 @@
 
 use std::process::ExitCode;
 
-use bitmaze::{check, dump, format::Level, newlevel, play, world::World};
+use bitmaze::{check, dump, format::Level, newlevel, play, window, world::World};
 
 const USAGE: &str = "\
 bit-maze — a game whose world is binary
@@ -19,7 +19,8 @@ USAGE:
     bitmaze <command> [args]
 
 COMMANDS:
-    play  <level.bm>            play in the terminal (w/a/s/d move, q quit)
+    play  [--term] <level.bm>   play in a window (w/a/s/d or arrows, esc/q quit);
+                               --term uses the headless terminal loop instead
     dump  <level.bm>            ASCII-art every plane + trigger map
     check <level.bm>            validate the file, exit nonzero if invalid
     asm   <in.asm> <out.bin>    assemble a script (not yet implemented)
@@ -61,18 +62,37 @@ fn cmd_todo(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// `play` — run the interactive terminal game loop (Phase 2). Phase 3 replaces
-/// this terminal front-end with a minifb window over the same `World`.
+/// `play` — run the interactive game over the shared Phase 2 [`World`] core.
+/// Defaults to the Phase 3 minifb window; `--term` selects the headless terminal
+/// loop (the same `World`/`step`, a different I/O shell). Both reuse `world`
+/// unchanged.
 fn cmd_play(args: &[String]) -> Result<(), String> {
-    let [path] = args else {
-        return Err("usage: bitmaze play <level.bm>".to_string());
+    let usage = "usage: bitmaze play [--term] <level.bm>";
+    let mut term = false;
+    let mut path: Option<&String> = None;
+    for a in args {
+        match a.as_str() {
+            "--term" => term = true,
+            _ if a.starts_with('-') => return Err(format!("unknown play option '{a}'\n{usage}")),
+            _ if path.is_none() => path = Some(a),
+            _ => return Err(usage.to_string()),
+        }
+    }
+    let Some(path) = path else {
+        return Err(usage.to_string());
     };
+
     let level = load(path)?;
     let mut world = World::new(level).map_err(|e| format!("{path}: {e}"))?;
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    play::run(&mut world, stdin.lock(), stdout.lock())
-        .map_err(|e| format!("play loop I/O error: {e}"))
+
+    if term {
+        let stdin = std::io::stdin();
+        let stdout = std::io::stdout();
+        play::run(&mut world, stdin.lock(), stdout.lock())
+            .map_err(|e| format!("play loop I/O error: {e}"))
+    } else {
+        window::run(&mut world, window::TILE_PX)
+    }
 }
 
 fn load(path: &str) -> Result<Level, String> {
