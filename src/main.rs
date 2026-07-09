@@ -10,7 +10,7 @@
 
 use std::process::ExitCode;
 
-use bitmaze::{check, dump, format::Level, newlevel, play, window, world::World};
+use bitmaze::{asm, check, dump, format::Level, newlevel, play, window, world::World};
 
 const USAGE: &str = "\
 bit-maze — a game whose world is binary
@@ -23,7 +23,7 @@ COMMANDS:
                                --term uses the headless terminal loop instead
     dump  <level.bm>            ASCII-art every plane + trigger map
     check <level.bm>            validate the file, exit nonzero if invalid
-    asm   <in.asm> <out.bin>    assemble a script (not yet implemented)
+    asm   <in.asm> <out.bin>    assemble a script to raw bytecode
     new   <w> <h> <out.bm>      generate a sample walls-only level
 ";
 
@@ -39,7 +39,7 @@ fn main() -> ExitCode {
         "play" => cmd_play(rest),
         "dump" => cmd_dump(rest),
         "check" => return cmd_check(rest),
-        "asm" => cmd_todo("asm"),
+        "asm" => cmd_asm(rest),
         "new" => cmd_new(rest),
         "-h" | "--help" | "help" => {
             print!("{USAGE}");
@@ -57,8 +57,16 @@ fn main() -> ExitCode {
     }
 }
 
-fn cmd_todo(name: &str) -> Result<(), String> {
-    println!("`{name}` not yet implemented");
+/// `asm` — assemble a `.asm` script into raw BitVM bytecode (Phase 5). Writes
+/// the raw script bytes (not a `.bm` level); a later tool embeds them.
+fn cmd_asm(args: &[String]) -> Result<(), String> {
+    let [input, output] = args else {
+        return Err("usage: bitmaze asm <in.asm> <out.bin>".to_string());
+    };
+    let src = std::fs::read_to_string(input).map_err(|e| format!("cannot read {input}: {e}"))?;
+    let bytes = asm::assemble(&src).map_err(|e| format!("{input}:{e}"))?;
+    std::fs::write(output, &bytes).map_err(|e| format!("cannot write {output}: {e}"))?;
+    println!("assembled {input} -> {output} ({} bytes)", bytes.len());
     Ok(())
 }
 

@@ -147,3 +147,39 @@ Integration tests load `levels/door.bm`, assert the committed file byte-matches
 its programmatic build, step onto the plate and assert (4,3) cleared, walk the
 opened door end-to-end, and confirm blocked/idle steps fire nothing.
 `cargo build`, `cargo clippy --all-targets` clean, `cargo test` all green.
+
+## Phase 5 — Assembler
+
+Added the text→bytecode assembler (`src/asm.rs`, **221 non-test lines**, under
+the rule-#6 ≤300 cap) and wired `bitmaze asm <in.asm> <out.bin>`, which writes
+the raw script bytes (not a `.bm` level). It is a dead-simple, line-oriented,
+two-pass assembler and stays that way on purpose: one instruction per line, `;`
+comments to end of line, blank lines ignored, case-insensitive mnemonics, and
+`name:` labels on their own line. No macros, includes, expression evaluator,
+preprocessor, or nested scopes — when a script needs more, the answer is a new
+opcode in `src/vm.rs`, never a language feature here (see `docs/ASM.md`).
+
+Language surface: every operand-less opcode by mnemonic (`nop halt pop dup add
+sub get_wall set_wall clr_wall player_x player_y rand`) → its exact VM byte;
+`push N` auto-picks PUSH8 (`0x10`) for `N ≤ 255` else PUSH16 (`0x11`) + 2 LE
+bytes, with explicit `push8`/`push16` to force a width; numbers are decimal or
+`0x`-hex, bounded to `u16`. `jmp label`/`jz label` emit `0x60`/`0x61` + an `i8`
+relative offset computed against the byte *after* the full instruction — the
+same base `src/vm.rs` uses — so assembled jumps execute correctly (pass 1 lays
+out sizes and records label offsets, pass 2 resolves). Every error path
+(unknown mnemonic, undefined/duplicate label, offset out of i8 range, bad/oob
+operand, stray operand) returns an `AsmError` carrying the 1-based source line;
+the assembler never panics.
+
+Proof: `scripts/door.asm` (the ROADMAP door example) assembles to exactly
+`10 04 10 03 32 01`, byte-identical to `levels/door.bm` script id 1.
+`scripts/countdown.asm` exercises a label with both a forward `jz` and a
+backward `jmp`, assembling to `10 03 10 01 21 13 61 02 60 f8 01` (jz done = +2,
+jmp top = -8/0xF8) — a test runs it through the VM and confirms it halts cleanly
+via `HALT`, and an infinite `jmp self` halts via the budget cap (no hang). A
+mechanical guard test (`assembler_stays_under_300_lines`) counts the lines of
+`src/asm.rs` before the `#[cfg(test)]` marker and fails if it exceeds 300;
+current count is 221. 17 new tests (door round-trip, every mnemonic, push
+sizing, hex/decimal, forward/backward jumps, VM execution, all error cases, the
+line guard); all 49 prior tests still green (66 total). `cargo build`,
+`cargo clippy --all-targets` clean.

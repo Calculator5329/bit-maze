@@ -4,6 +4,7 @@
 //! (`src/main.rs`) is a thin CLI over these functions so that the same code is
 //! exercised by both the game and the integration tests.
 
+pub mod asm;
 pub mod check;
 pub mod dump;
 pub mod format;
