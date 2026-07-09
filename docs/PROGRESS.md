@@ -230,3 +230,65 @@ then `bitmaze sprite sprites/wall.spr` prints the brick pattern; `xxd
 sprites/wall.spr` shows `53 50 01 08 08 ff ee ee 00 bb bb 00 ff`. `bitmaze play`
 with no display still exits 1 with the clear "cannot open a window … use
 `--term`" message (window path unchanged); `--term` still walks `@` and quits.
+
+## Phase 7 — Expansion & polish (project feature-complete)
+
+The final phase, which exercises the "very expandable" promise: every deliverable
+was **additive**, no format renumbering or core rewrite.
+
+**Items plane + pickup ("add a plane -> add a mechanic").** Bitplane 1 is now an
+ITEMS plane (`1` = item), a pure 1-bit plane exactly like walls — so the v1 `.bm`
+format needed **no change** (`planes` reads `2`; the file stays v1). `World`
+gained a `score: u32` (the single source of truth) and collects on move: `step`
+clears the items bit at the tile just entered and increments `score` (spawn
+collects too). `World::render` draws items as `*`; the terminal front-end shows a
+live score; `dump` labels plane 1 `ITEMS`. Determinism preserved (pure, no
+I/O/time/RNG).
+
+**Four new opcodes ("add an opcode, not a language feature"), at previously
+unused bytes, no renumbering.** Query group: `GET_ITEM` (0x42, `x y -> bit`,
+reads the items plane, OOB-safe) and `SCORE` (0x43, `-> n`). New 0x7_ memory
+group: `LOAD` (0x70, `addr -> value`) and `STORE` (0x71, `value addr ->`), the
+first users of the 256-byte scratch RAM — addresses mask with `& 0xFF` so RAM
+access is always in bounds. The `VmHost` trait grew `get_item`/`score`; `World`
+and both test hosts implement them. The assembler gained four one-line
+`SIMPLE`-table entries (`get_item score load store`); the ≤300-line guard stays
+green at **225 lines**. `docs/VM.md` opcode table updated.
+
+**Deterministic replay files (`.rec`).** A new versioned binary format
+(`src/replay.rs`, `docs/REPLAY.md`): magic `"BR"`, version, a level reference,
+then the move stream at **2 bits per move** (`00`=Up..`11`=Right, MSB-first). The
+terminal loop returns the applied-move sequence; `bitmaze play --term --record
+<run.rec> <level.bm>` writes it, and `bitmaze play --replay <run.rec> <level.bm>`
+re-runs it against a fresh world and prints the reproduced final state. Because
+the world is deterministic, replay reproduces player position, score, and every
+trigger-mutated wall exactly — a test records a garden run, round-trips it through
+the format, replays it, and asserts byte-identical final `World` state.
+
+**PPM screenshot export.** A pure `framebuffer::to_ppm` encodes the rendered
+`u32` buffer as a binary **P6 PPM** (pure std, no image crate). `bitmaze shot
+<level.bm> <out.ppm> [tile_px]` calls the *real* `framebuffer::draw` (sprites +
+palette) into a headless buffer and writes a viewable image with no display —
+visual proof the renderer works. `bitmaze shot levels/first.bm levels/first.ppm`
+produces a valid `192x192` P6 (110607 bytes = 15-byte header + 192*192*3). A test
+asserts the header and exact byte length.
+
+**Richer sample content.** `scripts/gate.asm` and `scripts/vault.asm` are
+assembled and embedded into `levels/garden.bm` (10x7, walls + 5 items + a plate
+opening a gate) and `levels/vault.bm` (8x6, walls + items + a plate that bumps a
+RAM counter via LOAD/STORE before opening a vault). `src/samples.rs` is the
+documented "embed assembled bytecode into a `.bm` script table" helper the Phase
+5 notes flagged as missing; `bitmaze gen-levels <dir>` writes the samples, and a
+test asserts the committed files byte-match the builders and pass `check`. A
+headless playthrough (`printf '...' | bitmaze play --term levels/garden.bm`) walks
+`@`, collects items (score climbs), and fires the gate script.
+
+**Docs & polish.** `README.md` rewritten into a proper front door (philosophy,
+all three formats, full CLI with examples, design rules). New `docs/REPLAY.md`;
+`docs/FORMAT.md` gained an items-plane section; `docs/VM.md` and `docs/ASM.md`
+carry the new opcodes; this log and `ROADMAP.md` mark the project complete.
+
+Tests: 20 new (7 VM opcode/cap tests, 6 replay-format unit tests, 1 PPM test, 2
+sample unit tests, 2 replay integration + 2 sample integration) on top of the 76
+prior — **96 total, all green**. `cargo build`, `cargo clippy --all-targets`
+clean, no new external crates. The project is **feature-complete**.

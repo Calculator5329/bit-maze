@@ -17,7 +17,11 @@ pub fn render(level: &Level) -> String {
     );
 
     for (i, _plane) in level.planes.iter().enumerate() {
-        let label = if i == 0 { "WALLS" } else { "aux" };
+        let label = match i {
+            0 => "WALLS",
+            1 => "ITEMS",
+            _ => "aux",
+        };
         let _ = writeln!(out, "\nplane {i} ({label})  '#' = set, '.' = clear:");
         for y in 0..level.height {
             for x in 0..level.width {

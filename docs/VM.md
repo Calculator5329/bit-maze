@@ -35,13 +35,32 @@ randomness comes from the seeded xorshift PRNG only.
 | 0x32 | `CLR_WALL` | x y →                   | clear walls bit (open a door)         |
 | 0x40 | `PLAYER_X` | → x                     | push player x                         |
 | 0x41 | `PLAYER_Y` | → y                     | push player y                         |
+| 0x42 | `GET_ITEM` | x y → bit               | read items plane at (x,y) *(Phase 7)* |
+| 0x43 | `SCORE`    | → n                     | push collected-item count *(Phase 7)* |
 | 0x50 | `RAND`     | → r                     | push next xorshift32 value (low 16b)  |
 | 0x60 | `JMP o`    | —                       | relative jump (i8 offset)             |
 | 0x61 | `JZ o`     | v →                     | pop; if 0, relative jump (i8)         |
+| 0x70 | `LOAD`     | addr → value            | push scratch RAM[addr & 0xFF] *(Ph.7)*|
+| 0x71 | `STORE`    | value addr →            | RAM[addr & 0xFF] = value & 0xFF *(Ph.7)*|
 
 Opcodes are grouped by category (0x0_ control, 0x1_ stack, 0x2_ arith, 0x3_
-world, 0x4_ query, 0x5_ rng, 0x6_ flow) so there's room to grow each without
-renumbering.
+world, 0x4_ query, 0x5_ rng, 0x6_ flow, **0x7_ memory**) so there's room to grow
+each without renumbering. The four Phase 7 opcodes were *added* at previously
+unused bytes — no existing opcode was renumbered (design rule #6 in action:
+grow by adding, never by breaking).
+
+### Phase 7 opcode notes
+
+- **`GET_ITEM` (0x42)** mirrors `GET_WALL`: pops `x y` (y on top) and pushes the
+  items-plane bit at `(x,y)` as `0`/`1`. Out of bounds, or a level with no items
+  plane, reads `0` — never a panic (bounds-checked in the `VmHost` impl).
+- **`SCORE` (0x43)** pushes the world's live collected-item count, saturated into
+  the `u16` cell.
+- **`LOAD` (0x70) / `STORE` (0x71)** are the first opcodes to use the 256-byte
+  scratch RAM. The address is masked with `& 0xFF`, so it always lands in
+  `0..=255` — a script can never index RAM out of bounds. `STORE` writes the low
+  byte of the value; `LOAD` zero-extends the byte back into a cell. Unwritten RAM
+  reads `0`.
 
 Unknown opcode → halt with `BadOpcode` (never crash). Any random bytes are a
 valid (if inert) script — this is what makes "mods are just files" safe.
@@ -76,9 +95,9 @@ Details fixed during implementation (all consistent with the spec above):
   (FNV-1a over the level bytes) at construction; each trigger run mixes that with
   the plate `(x,y)` so different plates get different `RAND` streams and the same
   plate replays identically. `RAND` pushes the low 16 bits of the next state.
-- **RAM.** The fixed 256-byte scratch buffer exists per the machine model, but no
-  v0 opcode reads or writes it yet — that arrives with a future load/store
-  opcode (Phase 7), by *adding* opcodes, not breaking these.
+- **RAM.** The fixed 256-byte scratch buffer is read/written by `LOAD` (0x70) and
+  `STORE` (0x71), added in Phase 7 by *adding* opcodes, not breaking the v0 set.
+  Addresses mask with `& 0xFF` so RAM access is always in bounds.
 
 ## Trigger firing semantics (v0)
 

@@ -11,12 +11,15 @@ pub mod format;
 pub mod framebuffer;
 pub mod newlevel;
 pub mod play;
+pub mod replay;
+pub mod samples;
 pub mod sprite;
 pub mod vm;
 pub mod window;
 pub mod world;
 
 pub use format::{BmError, Level, Script};
+pub use replay::{Replay, ReplayError};
 pub use sprite::{Palette, Sprite, SpriteError, Sprites};
 pub use vm::{Halt, Vm, VmHost};
 pub use world::{Move, StepOutcome, StepResult, TriggerRun, World};

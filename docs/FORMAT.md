@@ -39,6 +39,16 @@ All integers are **little-endian**. Bit order within a plane byte is
 The file must be **exactly** the length implied by its header + declared
 sections. Trailing bytes are an error; a short file is an error.
 
+## Items plane (Phase 7) — "add a plane → add a mechanic"
+
+The items plane is **plane 1**, a pure 1-bit bitplane exactly like walls (`1` =
+an item is on that tile). It needed **no format change** — the multi-plane
+mechanism was in v1 from day one, so `planes` simply reads `2` and `.bm` stays
+**v1**. When the player steps onto a tile whose items bit is set, the engine
+clears the bit and increments `World.score` (see `src/world.rs`). `bitmaze dump`
+labels plane 0 `WALLS` and plane 1 `ITEMS`. This is the format's expandability
+promise made concrete: a new mechanic was additive, not a rewrite.
+
 ## Trigger binding decision (consciously breaking "1 bit/tile")
 
 A bitplane can only say *"something is here"* — 1 bit cannot say *which* script.

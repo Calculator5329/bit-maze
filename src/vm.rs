@@ -47,6 +47,11 @@ pub trait VmHost {
     fn player_x(&self) -> u16;
     /// Current player row.
     fn player_y(&self) -> u16;
+    /// Read the items-plane bit at `(x, y)` (Phase 7). Out of bounds, or a level
+    /// with no items plane → `false`.
+    fn get_item(&self, x: u16, y: u16) -> bool;
+    /// Current collected-item score, saturated into a `u16` cell (Phase 7).
+    fn score(&self) -> u16;
 }
 
 /// Why a script run stopped. Every stop is one of these — the VM never panics
@@ -100,9 +105,9 @@ impl std::fmt::Display for Halt {
 /// [`Vm::run`]. A fresh `Vm` per trigger keeps runs stateless in v0.
 pub struct Vm {
     stack: Vec<u16>,
-    /// Fixed 256-byte scratch RAM. Present per the machine model; no v0 opcode
-    /// reads or writes it yet (that arrives when a load/store opcode is added in
-    /// a later phase), but the storage is reserved so scripts stay heap-free.
+    /// Fixed 256-byte scratch RAM, read/written by `LOAD` (0x70) / `STORE`
+    /// (0x71) since Phase 7. Addresses wrap into `0..=255` (`addr & 0xFF`) so a
+    /// script can never index out of bounds. No heap.
     ram: [u8; RAM_SIZE],
     /// xorshift32 state. Non-zero invariant is upheld in [`Vm::new`].
     rng: u32,
@@ -258,6 +263,20 @@ impl Vm {
                         return h;
                     }
                 }
+                0x42 => {
+                    // GET_ITEM: x y -> bit (read the items plane)
+                    let (Some(y), Some(x)) = (self.stack.pop(), self.stack.pop()) else {
+                        return Halt::StackUnderflow;
+                    };
+                    self.stack.push(host.get_item(x, y) as u16); // net -1, room guaranteed
+                }
+                0x43 => {
+                    // SCORE -> current collected-item count
+                    let s = host.score();
+                    if let Err(h) = self.push(s) {
+                        return h;
+                    }
+                }
 
                 0x50 => {
                     // RAND -> r
@@ -291,6 +310,26 @@ impl Vm {
                     }
                 }
 
+                0x70 => {
+                    // LOAD: addr -> value. Reads the scratch RAM byte at
+                    // `addr & 0xFF` (address wraps, so never out of bounds).
+                    let Some(addr) = self.stack.pop() else {
+                        return Halt::StackUnderflow;
+                    };
+                    let v = self.ram[(addr & 0xFF) as usize] as u16;
+                    if let Err(h) = self.push(v) {
+                        return h;
+                    }
+                }
+                0x71 => {
+                    // STORE: value addr -> . Writes the low byte of `value` into
+                    // scratch RAM at `addr & 0xFF` (address wraps).
+                    let (Some(addr), Some(value)) = (self.stack.pop(), self.stack.pop()) else {
+                        return Halt::StackUnderflow;
+                    };
+                    self.ram[(addr & 0xFF) as usize] = (value & 0xFF) as u8;
+                }
+
                 other => return Halt::BadOpcode(other),
             }
         }
@@ -319,13 +358,16 @@ mod tests {
         w: u16,
         h: u16,
         walls: Vec<bool>,
+        items: Vec<bool>,
         px: u16,
         py: u16,
+        score: u16,
     }
 
     impl TestHost {
         fn new(w: u16, h: u16) -> TestHost {
-            TestHost { w, h, walls: vec![false; (w * h) as usize], px: 0, py: 0 }
+            let n = (w * h) as usize;
+            TestHost { w, h, walls: vec![false; n], items: vec![false; n], px: 0, py: 0, score: 0 }
         }
     }
 
@@ -347,6 +389,15 @@ mod tests {
         }
         fn player_y(&self) -> u16 {
             self.py
+        }
+        fn get_item(&self, x: u16, y: u16) -> bool {
+            if x >= self.w || y >= self.h {
+                return false;
+            }
+            self.items[(y * self.w + x) as usize]
+        }
+        fn score(&self) -> u16 {
+            self.score
         }
     }
 
@@ -625,6 +676,94 @@ mod tests {
         assert_eq!(run_on(&mut host, &[]), Halt::EndOfScript);
         assert_eq!(run_on(&mut host, &[0x00, 0x00]), Halt::EndOfScript); // NOP NOP, runs off
         assert_eq!(run_on(&mut host, &[0x01]), Halt::Halt);
+    }
+
+    // ---- Phase 7 opcodes: query (items/score) & memory (load/store) ------
+
+    #[test]
+    fn get_item_reads_the_items_plane() {
+        // Pre-place an item at (2,1); GET_ITEM(2,1) -> 1, used as x for set_wall(1,0).
+        let mut host = TestHost::new(4, 4);
+        host.items[4 + 2] = true; // (2,1) in a 4-wide grid
+        let script = [
+            0x10, 0x02, 0x10, 0x01, // push 2,1
+            0x42, //                   get_item(2,1) -> 1
+            0x10, 0x00, //             push 0 (y)
+            0x31, //                   set_wall(1,0)
+            0x01,
+        ];
+        assert_eq!(run_on(&mut host, &script), Halt::Halt);
+        assert!(host.get_wall(1, 0), "GET_ITEM of a set tile yields 1");
+        // An empty tile reads 0: get_item(3,3)=0; +5 -> 5; set_wall(5,0). If the
+        // read were 1 it would land on column 6 instead.
+        let mut host2 = TestHost::new(8, 1);
+        let script2 = [
+            0x10, 0x03, 0x10, 0x03, // push 3,3
+            0x42, //                   get_item(3,3) -> 0
+            0x10, 0x05, 0x20, //       push 5; add -> 5
+            0x10, 0x00, 0x31, //       push 0; set_wall(5,0)
+            0x01,
+        ];
+        assert_eq!(run_on(&mut host2, &script2), Halt::Halt);
+        assert!(host2.get_wall(5, 0), "GET_ITEM of an empty tile yields 0 (0+5=5)");
+        assert!(!host2.get_wall(6, 0), "not 1 (would be 1+5=6)");
+    }
+
+    #[test]
+    fn get_item_out_of_bounds_is_safe() {
+        // GET_ITEM(1000,1000) on a 2x2 grid must not panic and reads 0.
+        let mut host = TestHost::new(2, 2);
+        let script = [0x11, 0xE8, 0x03, 0x11, 0xE8, 0x03, 0x42, 0x12, 0x01];
+        assert_eq!(run_on(&mut host, &script), Halt::Halt);
+    }
+
+    #[test]
+    fn score_pushes_the_hosts_score() {
+        // SCORE -> 2; use it as column x for set_wall(2,0).
+        let mut host = TestHost::new(4, 4);
+        host.score = 2;
+        let script = [0x43, 0x10, 0x00, 0x31, 0x01]; // score, push 0, set_wall(2,0)
+        assert_eq!(run_on(&mut host, &script), Halt::Halt);
+        assert!(host.get_wall(2, 0), "SCORE pushes the current score");
+    }
+
+    #[test]
+    fn store_then_load_roundtrips_through_ram() {
+        // store 7 at addr 42; load addr 42 -> 7; use as x for set_wall(7,0).
+        let mut host = TestHost::new(8, 1);
+        let script = [
+            0x10, 0x07, 0x10, 0x2A, 0x71, // push 7; push 42; store  (ram[42]=7)
+            0x10, 0x2A, 0x70, //             push 42; load   -> 7
+            0x10, 0x00, 0x31, //             push 0; set_wall(7,0)
+            0x01,
+        ];
+        assert_eq!(run_on(&mut host, &script), Halt::Halt);
+        assert!(host.get_wall(7, 0), "value stored then loaded round-trips via RAM");
+    }
+
+    #[test]
+    fn load_from_unwritten_ram_is_zero_and_address_wraps() {
+        // Unwritten RAM reads 0. Also, addr 0x1_2A wraps to 0x2A, so a store to
+        // 0x12A then a load from 0x2A returns the value (address wrap proof).
+        let mut host = TestHost::new(4, 1);
+        // load addr 5 (never written) -> 0; set_wall(0,0) leaves it clear.
+        assert_eq!(run_on(&mut host, &[0x10, 0x05, 0x70, 0x12, 0x01]), Halt::Halt);
+        assert!(!host.get_wall(0, 0));
+        // push 3; push16 0x012A; store -> ram[0x2A]=3; push 0x2A; load -> 3.
+        let script = [
+            0x10, 0x03, 0x11, 0x2A, 0x01, 0x71, // store 3 at 0x012A -> ram[0x2A]
+            0x10, 0x2A, 0x70, //                   load 0x2A -> 3
+            0x10, 0x00, 0x31, 0x01, //             set_wall(3,0)
+        ];
+        assert_eq!(run_on(&mut host, &script), Halt::Halt);
+        assert!(host.get_wall(3, 0), "STORE/LOAD address wraps into 0..=255");
+    }
+
+    #[test]
+    fn store_underflow_halts_cleanly() {
+        let mut host = TestHost::new(1, 1);
+        assert_eq!(run_on(&mut host, &[0x71]), Halt::StackUnderflow); // STORE, empty
+        assert_eq!(run_on(&mut host, &[0x70]), Halt::StackUnderflow); // LOAD, empty
     }
 
     #[test]

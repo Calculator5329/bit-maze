@@ -11,7 +11,8 @@
 use std::process::ExitCode;
 
 use bitmaze::{
-    asm, check, dump, format::Level, newlevel, play, sprite, sprite::Sprites, window, world::World,
+    asm, check, dump, format::Level, framebuffer, newlevel, play, replay, samples, sprite,
+    sprite::Sprites, window, world::World,
 };
 
 const USAGE: &str = "\
@@ -23,10 +24,14 @@ USAGE:
 COMMANDS:
     play  [--term] <level.bm>   play in a window (w/a/s/d or arrows, esc/q quit);
                                --term uses the headless terminal loop instead
+    play --term --record <r.rec> <level.bm>   record the input sequence to a .rec
+    play --replay <r.rec> <level.bm>          replay a .rec, print the final state
     dump  <level.bm>            ASCII-art every plane + trigger map
     check <level.bm>            validate the file, exit nonzero if invalid
     asm   <in.asm> <out.bin>    assemble a script to raw bytecode
     new   <w> <h> <out.bm>      generate a sample walls-only level
+    gen-levels <dir>            write the built-in sample levels (walls + items)
+    shot  <level.bm> <out.ppm> [tile_px]      render a level to a P6 PPM image
     sprite <file.spr>           dump a 1-bit sprite as ASCII (# ink / . paper)
     sprite gen <dir>            write the three default sprites into <dir>
 ";
@@ -45,6 +50,8 @@ fn main() -> ExitCode {
         "check" => return cmd_check(rest),
         "asm" => cmd_asm(rest),
         "new" => cmd_new(rest),
+        "gen-levels" => cmd_gen_levels(rest),
+        "shot" => cmd_shot(rest),
         "sprite" => cmd_sprite(rest),
         "-h" | "--help" | "help" => {
             print!("{USAGE}");
@@ -79,17 +86,38 @@ fn cmd_asm(args: &[String]) -> Result<(), String> {
 /// Defaults to the Phase 3 minifb window; `--term` selects the headless terminal
 /// loop (the same `World`/`step`, a different I/O shell). Both reuse `world`
 /// unchanged.
+///
+/// Phase 7 replay flags:
+/// - `--record <file.rec>` (with `--term`): log the input sequence to a `.rec`.
+/// - `--replay <file.rec>`: replay the log deterministically and print the exact
+///   final state (position, score, wall mutations) — no window, no input.
 fn cmd_play(args: &[String]) -> Result<(), String> {
-    let usage = "usage: bitmaze play [--term] <level.bm>";
+    let usage = "usage: bitmaze play [--term] [--record <file.rec>] [--replay <file.rec>] <level.bm>";
     let mut term = false;
+    let mut record: Option<String> = None;
+    let mut replay: Option<String> = None;
     let mut path: Option<&String> = None;
-    for a in args {
+
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
         match a.as_str() {
             "--term" => term = true,
+            "--record" => {
+                i += 1;
+                record =
+                    Some(args.get(i).ok_or_else(|| format!("--record needs a path\n{usage}"))?.clone());
+            }
+            "--replay" => {
+                i += 1;
+                replay =
+                    Some(args.get(i).ok_or_else(|| format!("--replay needs a path\n{usage}"))?.clone());
+            }
             _ if a.starts_with('-') => return Err(format!("unknown play option '{a}'\n{usage}")),
             _ if path.is_none() => path = Some(a),
             _ => return Err(usage.to_string()),
         }
+        i += 1;
     }
     let Some(path) = path else {
         return Err(usage.to_string());
@@ -98,11 +126,27 @@ fn cmd_play(args: &[String]) -> Result<(), String> {
     let level = load(path)?;
     let mut world = World::new(level).map_err(|e| format!("{path}: {e}"))?;
 
+    // Replay path: deterministic re-run, then print the final state.
+    if let Some(rec_path) = replay {
+        return cmd_replay(&mut world, &rec_path, path);
+    }
+
+    if record.is_some() && !term {
+        return Err(format!("--record requires --term (headless recording)\n{usage}"));
+    }
+
     if term {
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
-        play::run(&mut world, stdin.lock(), stdout.lock())
-            .map_err(|e| format!("play loop I/O error: {e}"))
+        let moves = play::run(&mut world, stdin.lock(), stdout.lock())
+            .map_err(|e| format!("play loop I/O error: {e}"))?;
+        if let Some(rec_path) = record {
+            let bytes = replay::Replay::new(path, &moves).to_bytes();
+            std::fs::write(&rec_path, &bytes)
+                .map_err(|e| format!("cannot write {rec_path}: {e}"))?;
+            eprintln!("recorded {} move(s) -> {rec_path} ({} bytes)", moves.len(), bytes.len());
+        }
+        Ok(())
     } else {
         // Load role sprites from `sprites/` (per-sprite fallback to built-ins),
         // then blit them through the default palette in the window.
@@ -112,6 +156,75 @@ fn cmd_play(args: &[String]) -> Result<(), String> {
         }
         window::run(&mut world, window::TILE_PX, &sprites, &sprite::Palette::DEFAULT)
     }
+}
+
+/// Replay a `.rec` file against `world` and print the reproduced final state.
+/// Because the world is deterministic, this is the exact state the recorded run
+/// ended in.
+fn cmd_replay(world: &mut World, rec_path: &str, level_path: &str) -> Result<(), String> {
+    let data = std::fs::read(rec_path).map_err(|e| format!("cannot read {rec_path}: {e}"))?;
+    let rep = replay::Replay::from_bytes(&data).map_err(|e| format!("{rec_path}: {e}"))?;
+    if rep.level_ref != level_path {
+        eprintln!(
+            "note: replay was recorded against '{}', replaying against '{}'",
+            rep.level_ref, level_path
+        );
+    }
+    for &mv in &rep.moves {
+        world.step_triggered(mv);
+    }
+    print!("{}", world.render());
+    println!("final: player @ ({},{})  score {}", world.px, world.py, world.score);
+    println!("replayed {} move(s) from {rec_path}", rep.moves.len());
+    Ok(())
+}
+
+/// `shot` — render a level with the *real* sprite/palette renderer into a
+/// headless framebuffer and write it as a binary P6 PPM (Phase 7). No display
+/// needed; the output is a viewable image proving the renderer works.
+fn cmd_shot(args: &[String]) -> Result<(), String> {
+    let usage = "usage: bitmaze shot <level.bm> <out.ppm> [tile_px]";
+    let (in_path, out_path, tile_px) = match args {
+        [i, o] => (i, o, window::TILE_PX),
+        [i, o, t] => {
+            let px: usize = t.parse().map_err(|_| format!("tile_px '{t}' must be a number\n{usage}"))?;
+            if px == 0 {
+                return Err("tile_px must be >= 1".to_string());
+            }
+            (i, o, px)
+        }
+        _ => return Err(usage.to_string()),
+    };
+    let level = load(in_path)?;
+    let world = World::new(level).map_err(|e| format!("{in_path}: {e}"))?;
+    let (sprites, _notes) = Sprites::load_from_dir(sprite::SPRITE_DIR);
+
+    let fb_w = framebuffer::fb_width(&world, tile_px);
+    let fb_h = framebuffer::fb_height(&world, tile_px);
+    let mut fb = vec![0u32; fb_w * fb_h];
+    framebuffer::draw(&world, &mut fb, fb_w, fb_h, tile_px, &sprites, &sprite::Palette::DEFAULT);
+
+    let ppm = framebuffer::to_ppm(&fb, fb_w, fb_h);
+    std::fs::write(out_path, &ppm).map_err(|e| format!("cannot write {out_path}: {e}"))?;
+    println!("wrote {out_path}: P6 PPM {fb_w}x{fb_h} ({} bytes)", ppm.len());
+    Ok(())
+}
+
+/// `gen-levels` — write the built-in sample levels (walls + items + an
+/// assembler-built trigger) into a directory. The documented helper that embeds
+/// assembled bytecode into a `.bm` script table (see `src/samples.rs`).
+fn cmd_gen_levels(args: &[String]) -> Result<(), String> {
+    let [dir] = args else {
+        return Err("usage: bitmaze gen-levels <dir>".to_string());
+    };
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {dir}: {e}"))?;
+    for (name, level) in samples::all() {
+        let path = format!("{dir}/{name}");
+        let bytes = level.to_bytes();
+        std::fs::write(&path, &bytes).map_err(|e| format!("cannot write {path}: {e}"))?;
+        println!("wrote {path}: {}x{} ({} bytes)", level.width, level.height, bytes.len());
+    }
+    Ok(())
 }
 
 /// `sprite` — the sprite counterpart of `dump`/`new`. With one `.spr` path it

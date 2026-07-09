@@ -17,21 +17,27 @@ use std::io::{BufRead, Write};
 /// Controls banner printed once at startup.
 pub const CONTROLS: &str = "controls: w/a/s/d = move, q = quit  (press Enter after each key)";
 
-/// Render one frame: the map with the player, a status line, and the controls
-/// hint. Kept out of the loop so it's easy to reason about and test.
+/// Render one frame: the map with the player, a status line (with the live
+/// item score), and the controls hint. Kept out of the loop so it's easy to
+/// reason about and test.
 fn frame(world: &World, status: &str) -> String {
     format!(
-        "{}player @ ({},{}) — {}\n{}\n",
+        "{}player @ ({},{})  score {} — {}\n{}\n",
         world.render(),
         world.px,
         world.py,
+        world.score,
         status,
         CONTROLS,
     )
 }
 
 /// Run the interactive terminal loop over `world`, reading keys from `input`
-/// and drawing frames to `output`. Returns on `q` or EOF.
+/// and drawing frames to `output`. Returns on `q` or EOF the **sequence of
+/// movement inputs applied**, in order — the caller turns that into a `.rec`
+/// replay when `--record` is set. Every directional key that reaches
+/// `step_triggered` is recorded (including ones that end up `Blocked`), so a
+/// replay reproduces the run tile-for-tile.
 ///
 /// Generic over the reader/writer so tests can drive it with in-memory buffers;
 /// `main` passes real stdin/stdout.
@@ -39,7 +45,8 @@ pub fn run<R: BufRead, W: Write>(
     world: &mut World,
     mut input: R,
     mut output: W,
-) -> std::io::Result<()> {
+) -> std::io::Result<Vec<Move>> {
+    let mut recorded: Vec<Move> = Vec::new();
     write!(output, "{}", frame(world, "start"))?;
     output.flush()?;
 
@@ -53,11 +60,12 @@ pub fn run<R: BufRead, W: Write>(
             if c == 'q' || c == 'Q' {
                 writeln!(output, "bye.")?;
                 output.flush()?;
-                return Ok(());
+                return Ok(recorded);
             }
             let Some(mv) = Move::from_key(c) else {
                 continue; // ignore whitespace, unknown keys
             };
+            recorded.push(mv);
             let outcome = world.step_triggered(mv);
             let mut status = match outcome.result {
                 crate::world::StepResult::Moved => "moved".to_string(),
@@ -76,5 +84,5 @@ pub fn run<R: BufRead, W: Write>(
             output.flush()?;
         }
     }
-    Ok(())
+    Ok(recorded)
 }

@@ -7,6 +7,10 @@ optimized Rust host running a custom stack-based bytecode VM ("BitVM"). The them
 
 Runs fully offline on Linux. No network at runtime, ever.
 
+> **Status: COMPLETE.** All phases 0–7 are done — the project is feature-complete
+> (96 tests green, `clippy` clean, zero non-`minifb` dependencies). This document
+> is the original plan; per-phase completion notes live in `docs/PROGRESS.md`.
+
 ---
 
 ## Non-negotiable design rules
@@ -222,9 +226,13 @@ with the fun VM — a VM with no world to act on can't be tested meaningfully.
   lookup, render player/tiles from sprite files instead of hardcoded pixels.
   *Done when:* the player and walls render from sprite files you can edit in `xxd`.
 
-- **Phase 7 — Expansion & polish.** Items plane, a couple more opcodes as needed, deterministic
-  **replay files** (input log = another binary file — very on-theme), docs pass, more sample
-  levels. This phase is where the "very expandable" promise gets exercised.
+- **Phase 7 — Expansion & polish.** ✅ **DONE.** Items plane (bitplane 1, no format
+  bump), four added opcodes (`GET_ITEM 0x42`, `SCORE 0x43`, `LOAD 0x70`, `STORE
+  0x71` — none renumbered), deterministic **replay files** (`.rec`, 2 bits/move),
+  PPM screenshot export (`bitmaze shot`), richer sample levels
+  (`levels/garden.bm`, `levels/vault.bm`) with assembler-built triggers, and a
+  full docs pass. The "very expandable" promise exercised: every addition was
+  additive. Assembler still ≤300 lines (225). See `docs/PROGRESS.md`.
 
 Each phase ends with: tests green, `cargo build` + `cargo clippy` clean, a one-paragraph note
 in `docs/PROGRESS.md`, and a git commit.

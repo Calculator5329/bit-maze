@@ -32,7 +32,7 @@ to *add an opcode* in `src/vm.rs`, never a language feature here.
 
 | Form | Emits | Notes |
 |------|-------|-------|
-| `nop halt pop dup add sub get_wall set_wall clr_wall player_x player_y rand` | one opcode byte | operand-less |
+| `nop halt pop dup add sub get_wall set_wall clr_wall player_x player_y get_item score rand load store` | one opcode byte | operand-less |
 | `push N` | `0x10 N` if `N ≤ 255`, else `0x11 lo hi` | auto-picks PUSH8/PUSH16 (LE) |
 | `push8 N` | `0x10 N` | forces 8-bit; errors if `N > 255` |
 | `push16 N` | `0x11 lo hi` | forces 16-bit little-endian |

@@ -9,6 +9,12 @@
 use crate::format::Level;
 use crate::vm::{Halt, Vm, VmHost};
 
+/// Bitplane index of the walls plane (`1` = wall). Always present.
+pub const WALLS_PLANE: usize = 0;
+/// Bitplane index of the items plane (`1` = item present). Optional (Phase 7):
+/// a level with only the walls plane simply has no items to collect.
+pub const ITEMS_PLANE: usize = 1;
+
 /// A single movement input for one [`World::step`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Move {
@@ -105,6 +111,10 @@ pub struct World {
     /// level bytes at construction so replays are reproducible; a front-end can
     /// overwrite it (it's a plain field) to vary a run without touching the VM.
     pub seed: u32,
+    /// Items collected so far (Phase 7). Incremented when the player steps onto
+    /// a tile whose items-plane bit is set; the bit is then cleared. This is the
+    /// single source of truth for the score — front-ends only read it.
+    pub score: u32,
 }
 
 /// Derive a non-zero run seed deterministically from bytes (FNV-1a/32). Pure —
@@ -131,8 +141,12 @@ impl World {
         let seed = derive_seed(&level.to_bytes());
         for y in 0..level.height {
             for x in 0..level.width {
-                if !level.get_bit(0, x, y) {
-                    return Ok(World { level, px: x, py: y, seed });
+                if !level.get_bit(WALLS_PLANE, x, y) {
+                    let mut world = World { level, px: x, py: y, seed, score: 0 };
+                    // The player may spawn on top of an item; collect it too so
+                    // the score is consistent with "standing on a picked tile".
+                    world.collect_item();
+                    return Ok(world);
                 }
             }
         }
@@ -161,13 +175,26 @@ impl World {
         let (nx, ny) = (nx as u8, ny as u8);
 
         // Into a wall -> no-op.
-        if self.level.get_bit(0, nx, ny) {
+        if self.level.get_bit(WALLS_PLANE, nx, ny) {
             return StepResult::Blocked;
         }
 
         self.px = nx;
         self.py = ny;
+        // Pick up an item if the tile just entered carries one (Phase 7).
+        self.collect_item();
         StepResult::Moved
+    }
+
+    /// If the player's current tile has an items-plane bit set, collect it:
+    /// clear the bit and increment [`World::score`]. Pure and deterministic. A
+    /// level with no items plane never collects anything (the read is a safe
+    /// `false`). This is the single spot that mutates the score.
+    fn collect_item(&mut self) {
+        if self.level.get_bit(ITEMS_PLANE, self.px, self.py) {
+            self.level.set_bit(ITEMS_PLANE, self.px, self.py, false);
+            self.score += 1;
+        }
     }
 
     /// Advance the world by one input **and fire any trigger** the player lands
@@ -225,9 +252,10 @@ impl World {
         Some(TriggerRun { script_id: id, x, y, halt })
     }
 
-    /// Draw the walls plane as ASCII (`#` = wall, `.` = floor, reusing the
-    /// `dump` convention) with the player drawn as `@` on top. Each row ends in
-    /// a newline. Snapshot-friendly and deterministic.
+    /// Draw the world as ASCII: `@` = player, `#` = wall, `*` = uncollected
+    /// item, `.` = floor. Player takes precedence over everything, then walls,
+    /// then items. Each row ends in a newline. Snapshot-friendly and
+    /// deterministic.
     pub fn render(&self) -> String {
         let mut out = String::with_capacity(
             (self.level.width as usize + 1) * self.level.height as usize,
@@ -236,8 +264,10 @@ impl World {
             for x in 0..self.level.width {
                 let ch = if x == self.px && y == self.py {
                     '@'
-                } else if self.level.get_bit(0, x, y) {
+                } else if self.level.get_bit(WALLS_PLANE, x, y) {
                     '#'
+                } else if self.level.get_bit(ITEMS_PLANE, x, y) {
+                    '*'
                 } else {
                     '.'
                 };
@@ -273,5 +303,16 @@ impl VmHost for World {
 
     fn player_y(&self) -> u16 {
         self.py as u16
+    }
+
+    fn get_item(&self, x: u16, y: u16) -> bool {
+        if x >= self.level.width as u16 || y >= self.level.height as u16 {
+            return false; // out of bounds reads as "no item"
+        }
+        self.level.get_bit(ITEMS_PLANE, x as u8, y as u8)
+    }
+
+    fn score(&self) -> u16 {
+        self.score.min(u16::MAX as u32) as u16
     }
 }
