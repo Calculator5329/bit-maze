@@ -52,6 +52,9 @@ pub trait VmHost {
     fn get_item(&self, x: u16, y: u16) -> bool;
     /// Current collected-item score, saturated into a `u16` cell (Phase 7).
     fn score(&self) -> u16;
+    /// Read the hazards-plane bit at `(x, y)` (Phase 8). Out of bounds, or a
+    /// level with no hazards plane → `false`.
+    fn get_hazard(&self, x: u16, y: u16) -> bool;
 }
 
 /// Why a script run stopped. Every stop is one of these — the VM never panics
@@ -277,6 +280,13 @@ impl Vm {
                         return h;
                     }
                 }
+                0x44 => {
+                    // GET_HAZARD: x y -> bit (read the hazards plane, Phase 8)
+                    let (Some(y), Some(x)) = (self.stack.pop(), self.stack.pop()) else {
+                        return Halt::StackUnderflow;
+                    };
+                    self.stack.push(host.get_hazard(x, y) as u16); // net -1, room guaranteed
+                }
 
                 0x50 => {
                     // RAND -> r
@@ -359,6 +369,7 @@ mod tests {
         h: u16,
         walls: Vec<bool>,
         items: Vec<bool>,
+        hazards: Vec<bool>,
         px: u16,
         py: u16,
         score: u16,
@@ -367,7 +378,16 @@ mod tests {
     impl TestHost {
         fn new(w: u16, h: u16) -> TestHost {
             let n = (w * h) as usize;
-            TestHost { w, h, walls: vec![false; n], items: vec![false; n], px: 0, py: 0, score: 0 }
+            TestHost {
+                w,
+                h,
+                walls: vec![false; n],
+                items: vec![false; n],
+                hazards: vec![false; n],
+                px: 0,
+                py: 0,
+                score: 0,
+            }
         }
     }
 
@@ -398,6 +418,12 @@ mod tests {
         }
         fn score(&self) -> u16 {
             self.score
+        }
+        fn get_hazard(&self, x: u16, y: u16) -> bool {
+            if x >= self.w || y >= self.h {
+                return false;
+            }
+            self.hazards[(y * self.w + x) as usize]
         }
     }
 
@@ -725,6 +751,28 @@ mod tests {
         let script = [0x43, 0x10, 0x00, 0x31, 0x01]; // score, push 0, set_wall(2,0)
         assert_eq!(run_on(&mut host, &script), Halt::Halt);
         assert!(host.get_wall(2, 0), "SCORE pushes the current score");
+    }
+
+    #[test]
+    fn get_hazard_reads_the_hazards_plane() {
+        // Pre-place a hazard at (2,1); GET_HAZARD(2,1) -> 1, used as x for
+        // set_wall(1,0). Mirrors the GET_ITEM/GET_WALL test pattern.
+        let mut host = TestHost::new(4, 4);
+        host.hazards[4 + 2] = true; // (2,1) in a 4-wide grid
+        let script = [
+            0x10, 0x02, 0x10, 0x01, // push 2,1
+            0x44, //                   get_hazard(2,1) -> 1
+            0x10, 0x00, //             push 0 (y)
+            0x31, //                   set_wall(1,0)
+            0x01,
+        ];
+        assert_eq!(run_on(&mut host, &script), Halt::Halt);
+        assert!(host.get_wall(1, 0), "GET_HAZARD of a set tile yields 1");
+
+        // An empty tile reads 0, and out-of-bounds is a safe 0 (no panic).
+        let mut host2 = TestHost::new(2, 2);
+        let script2 = [0x11, 0xE8, 0x03, 0x11, 0xE8, 0x03, 0x44, 0x12, 0x01]; // get_hazard(1000,1000); pop
+        assert_eq!(run_on(&mut host2, &script2), Halt::Halt);
     }
 
     #[test]

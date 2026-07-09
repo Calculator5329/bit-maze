@@ -10,6 +10,17 @@ Runs fully offline on Linux. No network at runtime, ever.
 > **Status: COMPLETE.** All phases 0–7 are done — the project is feature-complete
 > (96 tests green, `clippy` clean, zero non-`minifb` dependencies). This document
 > is the original plan; per-phase completion notes live in `docs/PROGRESS.md`.
+>
+> **Phase 8 (post-roadmap expansion) — the gameplay loop.** An *additive*
+> expansion beyond the original plan (phases 0–7 remain COMPLETE and unchanged):
+> a **hazards plane** (plane 2) + lose condition, a **win** condition (collect all
+> items), a **one-shot trigger latch** (high-bit script ids fire once; a runtime
+> `fired` bitset, no `.bm` change), a new **`GET_HAZARD` (0x44)** opcode, a
+> `GameState { Playing, Won, Lost }` on `World`, the winnable `levels/trial.bm`,
+> and a full docs pass. Every addition upheld the non-negotiable rules —
+> determinism, `.bm` still v1, VM caps intact, assembler still ≤300 lines (226).
+> Proof again that "add a plane / add an opcode" is additive, never a rewrite.
+> See `docs/PROGRESS.md` "Phase 8".
 
 ---
 

@@ -37,6 +37,7 @@ randomness comes from the seeded xorshift PRNG only.
 | 0x41 | `PLAYER_Y` | → y                     | push player y                         |
 | 0x42 | `GET_ITEM` | x y → bit               | read items plane at (x,y) *(Phase 7)* |
 | 0x43 | `SCORE`    | → n                     | push collected-item count *(Phase 7)* |
+| 0x44 | `GET_HAZARD` | x y → bit             | read hazards plane at (x,y) *(Phase 8)* |
 | 0x50 | `RAND`     | → r                     | push next xorshift32 value (low 16b)  |
 | 0x60 | `JMP o`    | —                       | relative jump (i8 offset)             |
 | 0x61 | `JZ o`     | v →                     | pop; if 0, relative jump (i8)         |
@@ -45,9 +46,10 @@ randomness comes from the seeded xorshift PRNG only.
 
 Opcodes are grouped by category (0x0_ control, 0x1_ stack, 0x2_ arith, 0x3_
 world, 0x4_ query, 0x5_ rng, 0x6_ flow, **0x7_ memory**) so there's room to grow
-each without renumbering. The four Phase 7 opcodes were *added* at previously
-unused bytes — no existing opcode was renumbered (design rule #6 in action:
-grow by adding, never by breaking).
+each without renumbering. The Phase 7 and Phase 8 opcodes were *added* at
+previously unused bytes — no existing opcode was renumbered (design rule #6 in
+action: grow by adding, never by breaking). `GET_HAZARD` (0x44) slotted straight
+into the free space in the 0x4_ query group beside `GET_ITEM`/`SCORE`.
 
 ### Phase 7 opcode notes
 
@@ -61,6 +63,14 @@ grow by adding, never by breaking).
   `0..=255` — a script can never index RAM out of bounds. `STORE` writes the low
   byte of the value; `LOAD` zero-extends the byte back into a cell. Unwritten RAM
   reads `0`.
+
+### Phase 8 opcode notes
+
+- **`GET_HAZARD` (0x44)** mirrors `GET_WALL`/`GET_ITEM`: pops `x y` (y on top) and
+  pushes the **hazards-plane** (plane 2) bit at `(x,y)` as `0`/`1`. Out of bounds,
+  or a level with no hazards plane, reads `0` — never a panic (bounds-checked in
+  the `VmHost` impl). A script can use it to sense danger before, e.g., placing a
+  wall or opening a path. Added by *adding* an opcode, not a language feature.
 
 Unknown opcode → halt with `BadOpcode` (never crash). Any random bytes are a
 valid (if inert) script — this is what makes "mods are just files" safe.
@@ -99,12 +109,21 @@ Details fixed during implementation (all consistent with the spec above):
   `STORE` (0x71), added in Phase 7 by *adding* opcodes, not breaking the v0 set.
   Addresses mask with `& 0xFF` so RAM access is always in bounds.
 
-## Trigger firing semantics (v0)
+## Trigger firing semantics
 
 - A trigger fires **after** a successful move resolves, on the tile just entered
-  (`World::step_triggered`). Blocked/idle steps fire nothing.
-- **Stateless**: re-entering the same plate fires the script again every time.
-  There is no one-shot latch in v0. Idempotent scripts (like the door, which
-  clears an already-clear wall harmlessly) are naturally safe to re-fire.
+  (`World::step_triggered`). Blocked/idle steps fire nothing, and a move that
+  ended the game by stepping onto a hazard fires nothing either.
+- **One-shot vs repeating — by script-id convention (Phase 8).** A trigger whose
+  script id has the **high bit set** (`0x80..=0xFF`, i.e. 128..=255) is
+  *one-shot*: it fires only the first time the player enters that tile this run.
+  Ids `1..=127` are *repeating* — re-entering fires the script again every time
+  (the pre-Phase-8 behavior; idempotent scripts like the door, which clears an
+  already-clear wall harmlessly, are safe to re-fire). The one-shot latch is a
+  per-tile **runtime** flag on `World` (a `fired` bitset), **not** stored in the
+  `.bm` file — so it costs no format change, and because it is rebuilt from the
+  same starting state it is fully deterministic and replay-safe. The convention
+  was chosen over "all triggers one-shot" so existing repeating samples
+  (`door`/`garden`/`vault`, all id 1) keep their behavior unchanged.
 - A zero trigger byte, or an id with no matching script-table entry, fires
   nothing. A malformed/looping script halts via a cap and the game continues.

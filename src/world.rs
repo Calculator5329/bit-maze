@@ -14,6 +14,25 @@ pub const WALLS_PLANE: usize = 0;
 /// Bitplane index of the items plane (`1` = item present). Optional (Phase 7):
 /// a level with only the walls plane simply has no items to collect.
 pub const ITEMS_PLANE: usize = 1;
+/// Bitplane index of the hazards plane (`1` = spike/hazard present). Optional
+/// (Phase 8): a level with only walls (+ items) simply has no hazards. Stepping
+/// onto a set hazard bit loses the game. A level that opts in has `planes = 3`;
+/// `.bm` stays v1 (the multi-plane mechanism was in the format from day one).
+pub const HAZARDS_PLANE: usize = 2;
+
+/// Whether the game is still in progress, won, or lost (Phase 8). The single
+/// source of truth for the win/lose outcome, held on [`World`]. It is pure state
+/// — set only by [`World::step`] from deterministic world logic (no time, no
+/// RNG), so replays reproduce it exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameState {
+    /// The game is in progress; moves are accepted.
+    Playing,
+    /// Every item in the level has been collected. Terminal.
+    Won,
+    /// The player stepped onto a hazard tile. Terminal.
+    Lost,
+}
 
 /// A single movement input for one [`World::step`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +134,23 @@ pub struct World {
     /// a tile whose items-plane bit is set; the bit is then cleared. This is the
     /// single source of truth for the score — front-ends only read it.
     pub score: u32,
+    /// Total items in the level at construction (Phase 8). When [`World::score`]
+    /// reaches this (and it is nonzero), the game is [`GameState::Won`]. A level
+    /// with zero items has **no win-by-collection condition** — it is endless
+    /// sandbox play (so existing itemless samples never insta-win).
+    pub total_items: u32,
+    /// Win/lose state (Phase 8). The single source of truth for the outcome; see
+    /// [`GameState`]. Once it is not [`GameState::Playing`], [`World::step`]
+    /// ignores further moves (documented no-op).
+    pub state: GameState,
+    /// One-shot trigger latch (Phase 8), one flag per tile. A trigger whose
+    /// script id has the **high bit set** (`0x80..=0xFF`, i.e. 128..=255) is
+    /// *one-shot*: it fires only the first time the player enters that tile this
+    /// run, and its tile flag is then set so re-entering does nothing. Ids
+    /// `1..=127` are *repeating* (fire every entry, the pre-Phase-8 behavior).
+    /// This is pure **runtime** state — not stored in `.bm` — so replays rebuild
+    /// it deterministically from the same move sequence.
+    fired: Vec<bool>,
 }
 
 /// Derive a non-zero run seed deterministically from bytes (FNV-1a/32). Pure —
@@ -139,12 +175,24 @@ impl World {
     /// the level has no floor tile.
     pub fn new(level: Level) -> Result<World, SpawnError> {
         let seed = derive_seed(&level.to_bytes());
+        let total_items = count_items(&level);
+        let tiles = level.width as usize * level.height as usize;
         for y in 0..level.height {
             for x in 0..level.width {
                 if !level.get_bit(WALLS_PLANE, x, y) {
-                    let mut world = World { level, px: x, py: y, seed, score: 0 };
+                    let mut world = World {
+                        level,
+                        px: x,
+                        py: y,
+                        seed,
+                        score: 0,
+                        total_items,
+                        state: GameState::Playing,
+                        fired: vec![false; tiles],
+                    };
                     // The player may spawn on top of an item; collect it too so
-                    // the score is consistent with "standing on a picked tile".
+                    // the score is consistent with "standing on a picked tile"
+                    // (this can win a 1-item level whose only item is the spawn).
                     world.collect_item();
                     return Ok(world);
                 }
@@ -155,7 +203,18 @@ impl World {
 
     /// Advance the world by one input. Moving into a wall or off the map edge
     /// is a no-op (the player stays). Pure: no I/O, no randomness, no time.
+    ///
+    /// Phase 8: once the game is over ([`GameState::Won`]/[`GameState::Lost`]),
+    /// every move is ignored — a documented no-op that reports [`StepResult::Idle`].
+    /// Moving onto a **hazard** tile loses (`state` becomes [`GameState::Lost`]);
+    /// collecting the last item wins ([`GameState::Won`]). Both are set here so
+    /// the outcome is pure, deterministic world logic.
     pub fn step(&mut self, input: Move) -> StepResult {
+        // Game over: further moves do nothing (single source of truth is `state`).
+        if self.state != GameState::Playing {
+            return StepResult::Idle;
+        }
+
         let (dx, dy) = match input {
             Move::Up => (0i32, -1i32),
             Move::Down => (0, 1),
@@ -181,7 +240,17 @@ impl World {
 
         self.px = nx;
         self.py = ny;
-        // Pick up an item if the tile just entered carries one (Phase 7).
+
+        // Stepping onto a hazard loses immediately (Phase 8). The move still
+        // happened (the player is on the hazard tile), so this is a `Moved`; the
+        // hazard takes precedence over any item, which is not collected.
+        if self.level.get_bit(HAZARDS_PLANE, nx, ny) {
+            self.state = GameState::Lost;
+            return StepResult::Moved;
+        }
+
+        // Pick up an item if the tile just entered carries one (Phase 7); this
+        // may complete the level and set `state` to `Won` (Phase 8).
         self.collect_item();
         StepResult::Moved
     }
@@ -194,6 +263,11 @@ impl World {
         if self.level.get_bit(ITEMS_PLANE, self.px, self.py) {
             self.level.set_bit(ITEMS_PLANE, self.px, self.py, false);
             self.score += 1;
+            // Win when every item has been collected (Phase 8). A level with no
+            // items (`total_items == 0`) has no win condition: endless sandbox.
+            if self.total_items > 0 && self.score >= self.total_items {
+                self.state = GameState::Won;
+            }
         }
     }
 
@@ -204,17 +278,25 @@ impl World {
     /// the BitVM against `self`, which may mutate the walls plane (e.g. open a
     /// door). Both front-ends call this so trigger-driven wall changes show up.
     ///
-    /// Firing semantics (v0, deliberately simple and documented):
-    /// - Fires **after** the move resolves, on the tile just entered.
-    /// - **Stateless**: re-entering the same plate fires again every time. There
-    ///   is no one-shot latch in v0 (clearing an already-clear wall is a no-op,
-    ///   so idempotent scripts like the door are naturally safe to re-fire).
+    /// Firing semantics (documented):
+    /// - Fires **after** the move resolves, on the tile just entered — but only
+    ///   while the game is still [`GameState::Playing`] (a move that lost by
+    ///   stepping onto a hazard fires nothing).
+    /// - **One-shot vs repeating by script-id convention (Phase 8).** A trigger
+    ///   id with the high bit set (`0x80..=0xFF`) is *one-shot*: it fires only
+    ///   the first time the player enters that tile this run. Ids `1..=127` are
+    ///   *repeating* — re-entering fires again every time (the pre-Phase-8
+    ///   behavior; idempotent scripts like the door are safe to re-fire). The
+    ///   latch is per-tile runtime state, not stored in `.bm`, so replays rebuild
+    ///   it deterministically.
     /// - A trigger id with no matching script, or a zero byte, fires nothing.
     /// - The VM is hard-capped, so a malformed/looping script halts cleanly and
     ///   the game continues; it can never hang or crash here.
     pub fn step_triggered(&mut self, input: Move) -> StepOutcome {
         let result = self.step(input);
-        let trigger = if result == StepResult::Moved {
+        // Only fire on a successful move that did not end the game (a hazard-loss
+        // move is a `Moved` but leaves `state == Lost`, so it fires nothing).
+        let trigger = if result == StepResult::Moved && self.state == GameState::Playing {
             self.fire_trigger()
         } else {
             None
@@ -226,19 +308,30 @@ impl World {
     /// script, run it on a fresh VM against this world and report the outcome.
     fn fire_trigger(&mut self) -> Option<TriggerRun> {
         let (x, y) = (self.px, self.py);
+        let idx = y as usize * self.level.width as usize + x as usize;
 
         // Look up the trigger id and clone the script bytes, ending all borrows
         // of `self.level` before we hand `self` to the VM as a mutable host.
         let (id, bytes) = {
             let triggers = self.level.triggers.as_ref()?;
-            let idx = y as usize * self.level.width as usize + x as usize;
             let id = *triggers.get(idx)?;
             if id == 0 {
+                return None;
+            }
+            // One-shot latch (Phase 8): a high-bit id fires once per tile per run.
+            if id & 0x80 != 0 && *self.fired.get(idx).unwrap_or(&false) {
                 return None;
             }
             let script = self.level.scripts.as_ref()?.iter().find(|s| s.id == id)?;
             (id, script.bytes.clone())
         };
+
+        // Latch a one-shot trigger now that we know it will fire.
+        if id & 0x80 != 0 {
+            if let Some(flag) = self.fired.get_mut(idx) {
+                *flag = true;
+            }
+        }
 
         // Seed the run deterministically from the world seed mixed with the
         // plate coordinates, so different plates get different RAND streams and
@@ -252,10 +345,10 @@ impl World {
         Some(TriggerRun { script_id: id, x, y, halt })
     }
 
-    /// Draw the world as ASCII: `@` = player, `#` = wall, `*` = uncollected
-    /// item, `.` = floor. Player takes precedence over everything, then walls,
-    /// then items. Each row ends in a newline. Snapshot-friendly and
-    /// deterministic.
+    /// Draw the world as ASCII: `@` = player, `#` = wall, `^` = hazard/spike,
+    /// `*` = uncollected item, `.` = floor. Player takes precedence over
+    /// everything, then walls, then hazards, then items. Each row ends in a
+    /// newline. Snapshot-friendly and deterministic.
     pub fn render(&self) -> String {
         let mut out = String::with_capacity(
             (self.level.width as usize + 1) * self.level.height as usize,
@@ -266,6 +359,8 @@ impl World {
                     '@'
                 } else if self.level.get_bit(WALLS_PLANE, x, y) {
                     '#'
+                } else if self.level.get_bit(HAZARDS_PLANE, x, y) {
+                    '^'
                 } else if self.level.get_bit(ITEMS_PLANE, x, y) {
                     '*'
                 } else {
@@ -277,6 +372,20 @@ impl World {
         }
         out
     }
+}
+
+/// Count the set bits in the items plane — the level's total collectible count
+/// (Phase 8). Pure. A level with no items plane counts `0` (endless play).
+fn count_items(level: &Level) -> u32 {
+    let mut n = 0;
+    for y in 0..level.height {
+        for x in 0..level.width {
+            if level.get_bit(ITEMS_PLANE, x, y) {
+                n += 1;
+            }
+        }
+    }
+    n
 }
 
 /// The world's implementation of the VM's world seam. All coordinate handling
@@ -314,5 +423,12 @@ impl VmHost for World {
 
     fn score(&self) -> u16 {
         self.score.min(u16::MAX as u32) as u16
+    }
+
+    fn get_hazard(&self, x: u16, y: u16) -> bool {
+        if x >= self.level.width as u16 || y >= self.level.height as u16 {
+            return false; // out of bounds reads as "no hazard"
+        }
+        self.level.get_bit(HAZARDS_PLANE, x as u8, y as u8)
     }
 }

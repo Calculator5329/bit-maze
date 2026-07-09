@@ -14,7 +14,7 @@
 
 use crate::framebuffer;
 use crate::sprite::{Palette, Sprites};
-use crate::world::{Move, World};
+use crate::world::{GameState, Move, World};
 use minifb::{Key, KeyRepeat, Window, WindowOptions};
 
 /// Pixel size of one tile in the graphical window.
@@ -66,6 +66,11 @@ pub fn run(
 
     let mut fb = vec![palette.floor_paper; fb_w * fb_h];
 
+    // Track the game state so the win/lose outcome is logged exactly once. The
+    // window stays open after the game ends (further moves are ignored by
+    // `World::step`), so the final frame remains on screen; Esc/Q closes it.
+    let mut announced = false;
+
     while window.is_open() && !window.is_key_down(Key::Escape) && !window.is_key_down(Key::Q) {
         // Edge-triggered: one step per physical key press (no auto-repeat), so
         // discrete tile movement matches the terminal loop's feel.
@@ -74,6 +79,22 @@ pub fn run(
                 // Fire triggers too, so stepping on a plate mutates the walls
                 // plane; the next `draw` already reflects it (it reads live).
                 world.step_triggered(mv);
+            }
+        }
+
+        if !announced {
+            match world.state {
+                GameState::Won => {
+                    eprintln!("YOU WIN — collected all {} item(s).", world.total_items);
+                    window.set_title("bit-maze — YOU WIN");
+                    announced = true;
+                }
+                GameState::Lost => {
+                    eprintln!("GAME OVER — you stepped on a hazard.");
+                    window.set_title("bit-maze — GAME OVER");
+                    announced = true;
+                }
+                GameState::Playing => {}
             }
         }
 

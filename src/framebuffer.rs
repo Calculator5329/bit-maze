@@ -14,6 +14,9 @@
 //!   [`Palette::wall_paper`]);
 //! - a floor tile blits the floor sprite (ink → `floor_ink`, paper →
 //!   `floor_paper`);
+//! - a hazard tile (floor with the hazards-plane bit set) blits the floor sprite
+//!   first, then composites the spike sprite over it (ink → `hazard_ink`, paper →
+//!   **transparent**, so the floor shows through the spikes' gaps);
 //! - an item tile (floor with the items-plane bit set) blits the floor sprite
 //!   first, then composites the item gem over it (ink → `item_ink`, paper →
 //!   **transparent**, so the floor shows through the gem's gaps);
@@ -62,7 +65,13 @@ pub fn draw(
             } else {
                 // Floor base under everything that isn't a wall.
                 canvas.blit(tx, ty, &sprites.floor, palette.floor_ink, Some(palette.floor_paper));
-                let is_item = world.level.get_bit(1, tx, ty);
+                let is_hazard = world.level.get_bit(crate::world::HAZARDS_PLANE, tx, ty);
+                let is_item = world.level.get_bit(crate::world::ITEMS_PLANE, tx, ty);
+                if is_hazard && !is_player {
+                    // Hazard spikes composited over the floor: paper is
+                    // transparent, so the floor shows through the spikes' gaps.
+                    canvas.blit(tx, ty, &sprites.hazard, palette.hazard_ink, None);
+                }
                 if is_item && !is_player {
                     // Uncollected item composited over the floor: paper is
                     // transparent, so the floor shows through the gem's gaps.
@@ -240,6 +249,48 @@ mod tests {
         for sy in 0..tile_px {
             for sx in 0..tile_px {
                 assert_ne!(px_at(1, 1, sx, sy), pal.item_ink, "plain floor has no item ink");
+            }
+        }
+    }
+
+    #[test]
+    fn draw_composites_hazard_spikes_over_floor() {
+        // 3x2 level with a hazard on floor tile (2,1) — not the player tile
+        // (0,1). The spike sprite must render its ink; a plain floor tile shows
+        // no hazard ink anywhere. Mirrors the item-gem compositing test.
+        let mut level = Level::blank(3, 2);
+        level.planes.push(vec![0u8; crate::format::plane_len(3, 2)]); // items plane
+        level.planes.push(vec![0u8; crate::format::plane_len(3, 2)]); // hazards plane
+        for x in 0..3 {
+            level.set_bit(0, x, 0, true); // top row = walls
+        }
+        level.set_bit(crate::world::HAZARDS_PLANE, 2, 1, true); // hazard on (2,1)
+        let world = World::new(level).expect("has floor tiles");
+        assert_eq!((world.px, world.py), (0, 1)); // player elsewhere
+
+        let sprites = Sprites::default();
+        let pal = Palette::DEFAULT;
+        let tile_px = 8;
+        let fb_w = fb_width(&world, tile_px);
+        let fb_h = fb_height(&world, tile_px);
+        let mut fb = vec![0u32; fb_w * fb_h];
+        draw(&world, &mut fb, fb_w, fb_h, tile_px, &sprites, &pal);
+
+        let px_at = |tx: usize, ty: usize, sx: usize, sy: usize| {
+            fb[(ty * tile_px + sy) * fb_w + (tx * tile_px + sx)]
+        };
+
+        // The spike's solid base row (7) is ink; a top-row gap column shows the
+        // floor through the transparent paper.
+        assert!(Sprite::default_hazard().get(0, 7), "sanity: hazard (0,7) is ink");
+        assert_eq!(px_at(2, 1, 0, 7), pal.hazard_ink, "hazard spike ink pixel");
+        assert!(!Sprite::default_hazard().get(0, 0), "sanity: hazard (0,0) is paper");
+        assert_eq!(px_at(2, 1, 0, 0), pal.floor_paper, "floor shows through spike gap");
+
+        // A plain floor tile (1,1) shows no hazard ink at all.
+        for sy in 0..tile_px {
+            for sx in 0..tile_px {
+                assert_ne!(px_at(1, 1, sx, sy), pal.hazard_ink, "plain floor has no hazard ink");
             }
         }
     }

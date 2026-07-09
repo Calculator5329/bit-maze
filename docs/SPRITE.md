@@ -67,6 +67,7 @@ so it is trivially swappable:
 | wall   | `wall_ink` (slate brick)  | `wall_paper` (dark mortar)      |
 | floor  | `floor_ink` (dot)         | `floor_paper` (near-black)      |
 | item   | `item_ink` (cyan gem)     | **transparent** (floor shows)   |
+| hazard | `hazard_ink` (red spikes) | **transparent** (floor shows)   |
 | player | `player_ink` (amber)      | **transparent** (floor shows)   |
 
 Colors are `0x00RR_GGBB` (minifb's layout). `Palette::DEFAULT` is the compiled-in
@@ -79,6 +80,10 @@ nearest-neighbor sampling (any sprite size works at any tile size):
 
 - **wall tile** → wall sprite (ink → `wall_ink`, paper → `wall_paper`).
 - **floor tile** → floor sprite (ink → `floor_ink`, paper → `floor_paper`).
+- **hazard tile** (floor with the hazards-plane bit set, and not the player's
+  tile) → floor sprite first, then the spike sprite composited over it: ink →
+  `hazard_ink`, paper → **skipped** (transparent), so the floor shows through the
+  spikes' gaps. Stepping onto it loses the game (see `docs/FORMAT.md`).
 - **item tile** (floor with the items-plane bit set, and not the player's tile)
   → floor sprite first, then the item gem composited over it: ink → `item_ink`,
   paper → **skipped** (transparent), so the floor shows through the gem's gaps.
@@ -93,11 +98,11 @@ unit-tested by asserting individual pixels.
 ## Load path & fallback
 
 `bitmaze play` (window path) loads the role sprites from the `sprites/`
-directory — `wall.spr`, `floor.spr`, `player.spr`, `item.spr` — via
+directory — `wall.spr`, `floor.spr`, `player.spr`, `item.spr`, `hazard.spr` — via
 `Sprites::load_from_dir`. Each sprite that is **missing or fails to parse** falls
 back **individually** to its compiled-in default (`Sprite::default_wall/floor/
-player/item`), and a note is printed to stderr; a missing or corrupt file never
-stops the game. The `--term` path renders ASCII and uses no sprites.
+player/item/hazard`), and a note is printed to stderr; a missing or corrupt file
+never stops the game. The `--term` path renders ASCII and uses no sprites.
 
 ## Tooling
 
@@ -105,7 +110,7 @@ stops the game. The `--term` path renders ASCII and uses no sprites.
 bitmaze sprite <file.spr>   dump a sprite as ASCII (# ink / . paper) — the
                             headless verification tool (sprite's `dump`).
 bitmaze sprite gen <dir>    write the compiled-in default sprites into <dir>
-                            (regenerates sprites/: wall/floor/player/item).
+                            (regenerates sprites/: wall/floor/player/item/hazard).
 ```
 
 Because sprites are 1-bit binary files, they are equally editable in `xxd`: flip

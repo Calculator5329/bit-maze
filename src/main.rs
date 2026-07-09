@@ -12,7 +12,8 @@ use std::process::ExitCode;
 
 use bitmaze::{
     asm, check, dump, format::Level, framebuffer, newlevel, play, replay, samples, sprite,
-    sprite::Sprites, window, world::World,
+    sprite::Sprites, window,
+    world::{GameState, World},
 };
 
 const USAGE: &str = "\
@@ -174,7 +175,15 @@ fn cmd_replay(world: &mut World, rec_path: &str, level_path: &str) -> Result<(),
         world.step_triggered(mv);
     }
     print!("{}", world.render());
-    println!("final: player @ ({},{})  score {}", world.px, world.py, world.score);
+    let state = match world.state {
+        GameState::Playing => "playing",
+        GameState::Won => "WON",
+        GameState::Lost => "LOST",
+    };
+    println!(
+        "final: player @ ({},{})  score {}/{}  state {state}",
+        world.px, world.py, world.score, world.total_items
+    );
     println!("replayed {} move(s) from {rec_path}", rep.moves.len());
     Ok(())
 }
@@ -239,6 +248,7 @@ fn cmd_sprite(args: &[String]) -> Result<(), String> {
                 ("floor.spr", sprite::Sprite::default_floor()),
                 ("player.spr", sprite::Sprite::default_player()),
                 ("item.spr", sprite::Sprite::default_item()),
+                ("hazard.spr", sprite::Sprite::default_hazard()),
             ];
             for (name, spr) in defaults {
                 let path = format!("{dir}/{name}");

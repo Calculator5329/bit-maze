@@ -25,8 +25,9 @@ All integers are **little-endian**. Bit order within a plane byte is
 [header: 8 bytes]
 [bitplanes]        planes × ceil(width*height / 8) bytes each, row-major, MSB-first.
                    plane 0 = WALLS   (1 = wall, 0 = floor)   -- always present
-                   plane 1 = ITEMS   (optional, added later)
-                   plane 2 = ...     (add a plane → add a mechanic)
+                   plane 1 = ITEMS   (optional, Phase 7)
+                   plane 2 = HAZARDS (optional, Phase 8; 1 = spike/hazard)
+                   plane 3 = ...     (add a plane → add a mechanic)
 [trigger plane]    present iff flags.bit0. width*height BYTES (one per tile).
                    Each byte = a script id (0 = no trigger). This is a BYTE plane,
                    not a bitplane — see "Trigger binding decision" below.
@@ -48,6 +49,20 @@ mechanism was in v1 from day one, so `planes` simply reads `2` and `.bm` stays
 clears the bit and increments `World.score` (see `src/world.rs`). `bitmaze dump`
 labels plane 0 `WALLS` and plane 1 `ITEMS`. This is the format's expandability
 promise made concrete: a new mechanic was additive, not a rewrite.
+
+## Hazards plane (Phase 8) — "add a plane → add a mechanic", again
+
+The hazards plane is **plane 2**, another pure 1-bit bitplane (`1` = a
+spike/hazard is on that tile). Like the items plane it needed **no format
+change** — a level that opts in simply has `planes = 3` and stays **v1**.
+Stepping onto a set hazard bit **loses the game** (`World.state` becomes
+`GameState::Lost`; see `src/world.rs`). `bitmaze dump` labels plane 2 `HAZARDS`;
+`bitmaze check` handles 3 planes with no special-casing (it is plane-count
+agnostic). Levels without hazards are unaffected — they just have `planes ≤ 2`.
+The hazards plane is rendered as `^` in the terminal and as a red spike sprite in
+the graphical window (see `docs/SPRITE.md`). Win/lose is pure `World` state, and
+so is the one-shot trigger latch (a runtime `fired` bitset) — **neither touches
+the `.bm` layout** (see `docs/VM.md` for the one-shot convention).
 
 ## Trigger binding decision (consciously breaking "1 bit/tile")
 

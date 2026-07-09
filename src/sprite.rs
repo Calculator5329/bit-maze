@@ -222,6 +222,13 @@ impl Sprite {
     pub fn default_item() -> Sprite {
         Sprite::from_rows(8, &[0x18, 0x3C, 0x7E, 0xFF, 0x7E, 0x3C, 0x18, 0x00])
     }
+
+    /// Default 8×8 hazard sprite (Phase 8): two upward spikes on a solid base — a
+    /// spike pit. Deliberately jagged and multi-pointed so it reads as danger and
+    /// is visually distinct from the diamond item and the `@` player.
+    pub fn default_hazard() -> Sprite {
+        Sprite::from_rows(8, &[0x44, 0x44, 0x44, 0xEE, 0xEE, 0xEE, 0xFF, 0xFF])
+    }
 }
 
 /// The palette: maps the two 1-bit values, per tile role, to `0x00RR_GGBB`
@@ -239,6 +246,10 @@ pub struct Palette {
     /// The item gem's ink; like the player, its paper is transparent (floor
     /// shows through the gaps of the diamond).
     pub item_ink: u32,
+    /// The hazard/spike ink (Phase 8); like the item, its paper is transparent
+    /// (floor shows through the gaps of the spikes). A vivid red to read as
+    /// danger.
+    pub hazard_ink: u32,
 }
 
 impl Palette {
@@ -250,6 +261,7 @@ impl Palette {
         floor_paper: 0x000A_0A0F, // near-black floor
         player_ink: 0x00FF_B300, // bright amber
         item_ink: 0x0000_E5FF,   // bright cyan gem
+        hazard_ink: 0x00FF_3B30, // vivid red spikes
     };
 }
 
@@ -268,6 +280,7 @@ pub struct Sprites {
     pub floor: Sprite,
     pub player: Sprite,
     pub item: Sprite,
+    pub hazard: Sprite,
 }
 
 impl Default for Sprites {
@@ -277,6 +290,7 @@ impl Default for Sprites {
             floor: Sprite::default_floor(),
             player: Sprite::default_player(),
             item: Sprite::default_item(),
+            hazard: Sprite::default_hazard(),
         }
     }
 }
@@ -285,11 +299,12 @@ impl Default for Sprites {
 pub const SPRITE_DIR: &str = "sprites";
 
 impl Sprites {
-    /// Load `wall.spr`, `floor.spr`, `player.spr`, and `item.spr` from `dir`.
-    /// Each sprite that cannot be read or parsed falls back **individually** to its
-    /// compiled-in default (so a missing or corrupt file never stops the game).
-    /// Returns the set plus the list of human-readable fallback notes (empty if
-    /// every file loaded cleanly) so the caller can report what happened.
+    /// Load `wall.spr`, `floor.spr`, `player.spr`, `item.spr`, and `hazard.spr`
+    /// from `dir`. Each sprite that cannot be read or parsed falls back
+    /// **individually** to its compiled-in default (so a missing or corrupt file
+    /// never stops the game). Returns the set plus the list of human-readable
+    /// fallback notes (empty if every file loaded cleanly) so the caller can
+    /// report what happened.
     pub fn load_from_dir(dir: &str) -> (Sprites, Vec<String>) {
         let mut notes = Vec::new();
         let load_one = |name: &str, fallback: Sprite, notes: &mut Vec<String>| -> Sprite {
@@ -312,7 +327,8 @@ impl Sprites {
         let floor = load_one("floor.spr", Sprite::default_floor(), &mut notes);
         let player = load_one("player.spr", Sprite::default_player(), &mut notes);
         let item = load_one("item.spr", Sprite::default_item(), &mut notes);
-        (Sprites { wall, floor, player, item }, notes)
+        let hazard = load_one("hazard.spr", Sprite::default_hazard(), &mut notes);
+        (Sprites { wall, floor, player, item, hazard }, notes)
     }
 }
 
@@ -417,7 +433,7 @@ mod tests {
     fn missing_dir_falls_back_to_defaults() {
         let (sprites, notes) = Sprites::load_from_dir("/nonexistent-sprite-dir-xyz");
         assert_eq!(sprites, Sprites::default());
-        assert_eq!(notes.len(), 4); // all four fell back
+        assert_eq!(notes.len(), 5); // all five fell back
     }
 
     #[test]
@@ -435,5 +451,22 @@ mod tests {
         }
         assert!(!s.get(0, 0), "item top-left corner is paper (transparent)");
         assert!(s.get(3, 0), "item apex pixel is ink");
+    }
+
+    #[test]
+    fn hazard_sprite_round_trips_and_is_spiky() {
+        let s = Sprite::default_hazard();
+        // On-disk round-trip is byte-exact, like the other role sprites.
+        let bytes = s.to_bytes();
+        assert_eq!(bytes[3], 8); // width
+        assert_eq!(bytes[4], 8); // height
+        assert_eq!(Sprite::from_bytes(&bytes).unwrap(), s);
+        // Shape sanity: the base rows (6,7) are solid, and the top row has gaps
+        // between the spike tips (so it is distinct from a solid block or gem).
+        for x in 0..8 {
+            assert!(s.get(x, 7), "hazard base row is solid");
+        }
+        assert!(s.get(1, 0), "spike tip at column 1 is ink");
+        assert!(!s.get(0, 0), "gap beside the spike is paper (transparent)");
     }
 }

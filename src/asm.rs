@@ -48,6 +48,7 @@ const SIMPLE: &[(&str, u8)] = &[
     ("player_y", 0x41),
     ("get_item", 0x42),
     ("score", 0x43),
+    ("get_hazard", 0x44),
     ("rand", 0x50),
     ("load", 0x70),
     ("store", 0x71),
@@ -327,6 +328,9 @@ halt
         }
         fn score(&self) -> u16 {
             0
+        }
+        fn get_hazard(&self, _x: u16, _y: u16) -> bool {
+            false
         }
     }
 

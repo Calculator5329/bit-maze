@@ -22,4 +22,4 @@ pub use format::{BmError, Level, Script};
 pub use replay::{Replay, ReplayError};
 pub use sprite::{Palette, Sprite, SpriteError, Sprites};
 pub use vm::{Halt, Vm, VmHost};
-pub use world::{Move, StepOutcome, StepResult, TriggerRun, World};
+pub use world::{GameState, Move, StepOutcome, StepResult, TriggerRun, World};

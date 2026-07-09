@@ -302,3 +302,65 @@ transparent paper, composited over floor exactly like the player (player still
 draws on top when standing on an item). `sprite gen` writes `item.spr`;
 `load_from_dir` gains per-file fallback for it. Two new tests (framebuffer item-ink
 pixel assertion + item sprite round-trip) → **98 total, all green**; clippy clean.
+
+## Phase 8 — the gameplay loop (post-roadmap expansion)
+
+Turns the sandbox into a winnable/losable game. Every deliverable is **additive** —
+no format renumbering, no `.bm` layout change (`.bm` stays **v1**), no core rewrite —
+exercising the "add a plane / add an opcode" promise one more time.
+
+**Hazards plane + lose ("add a plane").** Bitplane **2** is now a HAZARDS plane
+(`1` = spike). A level that opts in has `planes = 3` and stays v1 (the multi-plane
+mechanism was in the format from day one). Stepping onto a set hazard bit **loses**.
+`World` gained a `GameState { Playing, Won, Lost }` field — the single source of
+truth for the outcome — set purely from world logic in `World::step` (no time, no
+RNG). Once not `Playing`, further moves are ignored (documented no-op). `dump`
+labels plane 2 `HAZARDS`; `check` already handled N planes; the terminal renders
+hazards as `^`. Graphically, a new 8×8 `hazard` sprite role (`Sprite::default_hazard`,
+red spikes on a solid base, `sprites/hazard.spr`) with a transparent-paper
+`hazard_ink` (`0x00FF3B30`) composites over floor exactly like the item gem;
+`sprite gen` writes `hazard.spr`, `load_from_dir` gains per-file fallback for it.
+
+**Win.** `World` counts the level's total items at construction (`total_items`); when
+`score` reaches it, `GameState` becomes `Won`. A level with **zero** items has no
+win-by-collection condition — endless/sandbox (so existing itemless samples never
+insta-win). Both front-ends surface the outcome: the terminal prints a clear
+`YOU WIN` / `GAME OVER` line and stops the loop; the window logs it to stderr and
+updates the title (staying open). `--replay` prints the reproduced `state
+WON`/`LOST`, reproduced deterministically.
+
+**One-shot trigger latch (by script-id convention).** A trigger whose script id has
+the **high bit set** (`0x80..=0xFF`) is *one-shot* — it fires only the first time the
+player enters that tile this run; ids `1..=127` *repeat* (the pre-Phase-8 behavior).
+The latch is a per-tile **runtime** `fired` bitset on `World`, **not** stored in
+`.bm`, so it is deterministic and replay-safe and costs no format change. This
+convention (rather than "all triggers one-shot") was chosen so the existing
+`door`/`garden`/`vault` samples — all id 1 — keep firing every entry, and **no
+existing trigger test needed changing**.
+
+**New opcode `GET_HAZARD` (0x44) ("add an opcode").** Slotted into the free space in
+the 0x4_ query group beside `GET_ITEM`/`SCORE`; pops `x y`, pushes the hazards-plane
+bit (OOB-safe, reads `0`). The `VmHost` trait grew `get_hazard`; `World` and both
+test hosts implement it. One new line in the assembler `SIMPLE` table
+(`get_hazard`); the ≤300-line guard stays green at **226 lines** (was 225).
+`docs/VM.md` opcode table updated.
+
+**Winnable sample `levels/trial.bm`.** An 8×6 room (via `src/samples.rs::trial`,
+script from `scripts/trial.asm`, embedded through the assembler like garden/vault):
+walls + 3 items + a spike hazard at (2,3) + a one-shot plate at (3,1) (id `0x80`)
+that opens a gate at (5,3) to the walled-off right column. Wired into `gen-levels`;
+a test asserts the committed file byte-matches its builder and passes `check`. A
+winning `--term` playthrough collects all three items and prints `YOU WIN`; a losing
+one steps on the spike and prints `GAME OVER`.
+
+**Tests & docs.** New tests: hazard-lose + win integration, one-shot vs repeating
+latch, itemless-is-endless, `GET_HAZARD` opcode unit + `World`-host bounds, hazard
+sprite round-trip, framebuffer hazard-pixel, trial win/lose routes, and replay
+reproduces `GameState` (`tests/phase8.rs`) — plus the trial in `samples::all()` so
+the existing committed-file check covers it. **111 total, all green** (98 prior +
+13); `cargo build` + `cargo clippy --all-targets` clean; no new external crates.
+One existing test intentionally relaxed: `samples.rs::samples_are_valid_and_reparse`
+asserted exactly 2 planes → now `>= 2`, because `trial` adds the hazards plane.
+Docs updated: `FORMAT.md` (hazards plane), `VM.md` (`GET_HAZARD` + one-shot
+semantics), `SPRITE.md` (hazard role/palette), `README.md` (win/lose, hazards,
+one-shot, the trial), this log, and a `ROADMAP.md` Phase 8 note.

@@ -19,10 +19,12 @@ ff 81 bd a5 af 81 fb ff   the maze, one byte per row (MSB = leftmost tile)
 
 Every artifact in bit-maze is a small, versioned, hex-editable binary file:
 
-- **Levels** are bitplanes. Plane 0 is walls, plane 1 is items — one bit per
-  tile. Adding a mechanic is *adding a plane*, not rewriting the engine.
+- **Levels** are bitplanes. Plane 0 is walls, plane 1 is items, plane 2 is
+  hazards — one bit per tile. Adding a mechanic is *adding a plane*, not rewriting
+  the engine.
 - **Triggers** are a byte-per-tile plane indexing a script table of **BitVM
-  bytecode** — the game's logic is data too.
+  bytecode** — the game's logic is data too. A trigger id with the high bit set is
+  a *one-shot* plate (fires once); ids 1..127 repeat.
 - **Sprites** are 1-bit bitmaps through a palette. No PNGs; a pixel is a bit.
 - **Replays** are the input log packed at 2 bits per move. A whole play session
   is a binary file, and because the world is deterministic it replays exactly.
@@ -91,10 +93,23 @@ needs a display.
 
 On a headless machine, use `--term`: a line-buffered terminal loop over the *same*
 world core (type a key + Enter; works over pipes). It draws the maze as ASCII —
-`@` player, `#` wall, `*` item, `.` floor — with a live score. Both paths drive
-identical `World`/`step` logic; only the I/O shell differs. Stepping onto an item
-collects it (score up); stepping onto a trigger tile runs its BitVM script (e.g.
-opening a gate).
+`@` player, `#` wall, `^` hazard, `*` item, `.` floor — with a live score. Both
+paths drive identical `World`/`step` logic; only the I/O shell differs. Stepping
+onto an item collects it (score up); stepping onto a trigger tile runs its BitVM
+script (e.g. opening a gate).
+
+### Winning and losing (Phase 8)
+
+- **Win**: collect **every** item in the level. When the score reaches the level's
+  total item count, the game is *won* — the terminal prints `YOU WIN` and stops;
+  the window logs it (and updates its title) and stays open. A level with **zero**
+  items has no win condition: it is endless/sandbox play.
+- **Lose**: step onto a **hazard** tile (hazards plane, plane 2). The game is
+  *over* — the terminal prints `GAME OVER` and stops; the window logs it. Avoid
+  the spikes.
+- Once the game is won or lost, further moves are ignored (a documented no-op).
+- Win/lose and the one-shot latch are pure, deterministic `World` state, so a
+  `--replay` reproduces the exact final outcome (it prints `state WON`/`LOST`).
 
 ## Sample content
 
@@ -104,8 +119,12 @@ opening a gate).
   gate to the far half of the room.
 - `levels/vault.bm` — walls + items + a plate whose `vault.asm` script uses the
   `LOAD`/`STORE` RAM opcodes before opening a vault.
+- `levels/trial.bm` — the Phase 8 winnable/losable trial: walls + 3 items + a
+  spike **hazard** + a **one-shot** plate (`trial.asm`) that opens a gate to the
+  walled-off items. Collect all three while avoiding the spike to win; step on the
+  spike to lose.
 
-The garden/vault levels are built by `src/samples.rs`, which embeds
+The garden/vault/trial levels are built by `src/samples.rs`, which embeds
 assembler-produced bytecode into the `.bm` script table; regenerate them with
 `bitmaze gen-levels levels`.
 
@@ -120,9 +139,11 @@ full list.
 
 ## Status
 
-**Feature-complete** — Phases 0–7 done. Versioned `.bm`/`.spr`/`.rec` formats
-with loaders/validators; `dump`/`check`/`new`/`gen-levels`/`shot` tooling; a pure
-deterministic world core (walls, items, score); terminal and `minifb` front-ends;
-the BitVM (20 opcodes) with triggers; the ≤300-line assembler; 1-bit sprites +
+**Feature-complete** — Phases 0–7 done, plus a **Phase 8** post-roadmap
+expansion (the gameplay loop). Versioned `.bm`/`.spr`/`.rec` formats with
+loaders/validators; `dump`/`check`/`new`/`gen-levels`/`shot` tooling; a pure
+deterministic world core (walls, items, score, **hazards, win/lose state**);
+terminal and `minifb` front-ends; the BitVM (21 opcodes, incl. `GET_HAZARD`) with
+triggers and a **one-shot latch**; the ≤300-line assembler; 1-bit sprites +
 palette; deterministic replays; and PPM screenshot export. See
 [`docs/PROGRESS.md`](docs/PROGRESS.md).

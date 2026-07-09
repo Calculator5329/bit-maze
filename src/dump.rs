@@ -20,6 +20,7 @@ pub fn render(level: &Level) -> String {
         let label = match i {
             0 => "WALLS",
             1 => "ITEMS",
+            2 => "HAZARDS",
             _ => "aux",
         };
         let _ = writeln!(out, "\nplane {i} ({label})  '#' = set, '.' = clear:");

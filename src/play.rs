@@ -11,7 +11,7 @@
 //! input like `printf 'd\nd\nq\n'` walks the player two tiles right then quits.
 //! The loop also ends at end-of-input (EOF).
 
-use crate::world::{Move, World};
+use crate::world::{GameState, Move, World};
 use std::io::{BufRead, Write};
 
 /// Controls banner printed once at startup.
@@ -82,6 +82,22 @@ pub fn run<R: BufRead, W: Write>(
             }
             write!(output, "{}", frame(world, &status))?;
             output.flush()?;
+
+            // Win/lose ends the run (Phase 8). The world is now terminal, so any
+            // further input would be ignored anyway; print the outcome and stop.
+            match world.state {
+                GameState::Won => {
+                    writeln!(output, "YOU WIN — collected all {} item(s).", world.total_items)?;
+                    output.flush()?;
+                    return Ok(recorded);
+                }
+                GameState::Lost => {
+                    writeln!(output, "GAME OVER — you stepped on a hazard.")?;
+                    output.flush()?;
+                    return Ok(recorded);
+                }
+                GameState::Playing => {}
+            }
         }
     }
     Ok(recorded)
