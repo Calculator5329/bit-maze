@@ -14,9 +14,12 @@
 //!   [`Palette::wall_paper`]);
 //! - a floor tile blits the floor sprite (ink → `floor_ink`, paper →
 //!   `floor_paper`);
+//! - an item tile (floor with the items-plane bit set) blits the floor sprite
+//!   first, then composites the item gem over it (ink → `item_ink`, paper →
+//!   **transparent**, so the floor shows through the gem's gaps);
 //! - the player's tile blits the floor sprite first, then composites the player
 //!   sprite over it (ink → `player_ink`, paper → **transparent**, so the floor
-//!   shows through).
+//!   shows through). The player draws on top even when standing on an item.
 //!
 //! Sprites are scaled to `tile_px` with nearest-neighbor sampling, so any
 //! sprite size works at any tile size (an 8×8 sprite fills a 24-px tile, a 4-px
@@ -59,8 +62,15 @@ pub fn draw(
             } else {
                 // Floor base under everything that isn't a wall.
                 canvas.blit(tx, ty, &sprites.floor, palette.floor_ink, Some(palette.floor_paper));
+                let is_item = world.level.get_bit(1, tx, ty);
+                if is_item && !is_player {
+                    // Uncollected item composited over the floor: paper is
+                    // transparent, so the floor shows through the gem's gaps.
+                    canvas.blit(tx, ty, &sprites.item, palette.item_ink, None);
+                }
                 if is_player {
-                    // Player composited over the floor: paper is transparent.
+                    // Player composited over the floor (and over any item on the
+                    // same tile): paper is transparent.
                     canvas.blit(tx, ty, &sprites.player, palette.player_ink, None);
                 }
             }
@@ -190,6 +200,48 @@ mod tests {
         assert_eq!(px_at(0, 1, 2, 0), pal.player_ink, "player ink pixel");
         assert!(!Sprite::default_player().get(0, 0), "sanity: player (0,0) is paper");
         assert_eq!(px_at(0, 1, 0, 0), pal.floor_paper, "floor shows through player paper");
+    }
+
+    #[test]
+    fn draw_composites_item_gem_over_floor() {
+        // Same 3x2 level, but put an item on floor tile (2,1) — not the player
+        // tile (0,1). The item gem must render its ink; a plain floor tile must
+        // not show item ink anywhere.
+        let mut level = Level::blank(3, 2);
+        level.planes.push(vec![0u8; crate::format::plane_len(3, 2)]); // items plane
+        for x in 0..3 {
+            level.set_bit(0, x, 0, true); // top row = walls
+        }
+        level.set_bit(1, 2, 1, true); // item on tile (2,1)
+        let world = World::new(level).expect("has floor tiles");
+        assert_eq!((world.px, world.py), (0, 1)); // player elsewhere
+        assert!(world.level.get_bit(1, 2, 1), "item still present (not collected)");
+
+        let sprites = Sprites::default();
+        let pal = Palette::DEFAULT;
+        let tile_px = 8;
+        let fb_w = fb_width(&world, tile_px);
+        let fb_h = fb_height(&world, tile_px);
+        let mut fb = vec![0u32; fb_w * fb_h];
+        draw(&world, &mut fb, fb_w, fb_h, tile_px, &sprites, &pal);
+
+        let px_at = |tx: usize, ty: usize, sx: usize, sy: usize| {
+            fb[(ty * tile_px + sy) * fb_w + (tx * tile_px + sx)]
+        };
+
+        // Item gem's widest row (3) is solid ink; its top-left corner is paper,
+        // so the floor paper shows through there.
+        assert!(Sprite::default_item().get(0, 3), "sanity: item (0,3) is ink");
+        assert_eq!(px_at(2, 1, 0, 3), pal.item_ink, "item gem ink pixel");
+        assert!(!Sprite::default_item().get(0, 0), "sanity: item (0,0) is paper");
+        assert_eq!(px_at(2, 1, 0, 0), pal.floor_paper, "floor shows through gem gap");
+
+        // A plain floor tile (1,1) shows no item ink at all.
+        for sy in 0..tile_px {
+            for sx in 0..tile_px {
+                assert_ne!(px_at(1, 1, sx, sy), pal.item_ink, "plain floor has no item ink");
+            }
+        }
     }
 
     #[test]

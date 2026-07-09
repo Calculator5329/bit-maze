@@ -33,7 +33,7 @@ COMMANDS:
     gen-levels <dir>            write the built-in sample levels (walls + items)
     shot  <level.bm> <out.ppm> [tile_px]      render a level to a P6 PPM image
     sprite <file.spr>           dump a 1-bit sprite as ASCII (# ink / . paper)
-    sprite gen <dir>            write the three default sprites into <dir>
+    sprite gen <dir>            write the default sprites into <dir>
 ";
 
 fn main() -> ExitCode {
@@ -229,7 +229,7 @@ fn cmd_gen_levels(args: &[String]) -> Result<(), String> {
 
 /// `sprite` — the sprite counterpart of `dump`/`new`. With one `.spr` path it
 /// prints the sprite as ASCII art (the headless verification tool). With
-/// `gen <dir>` it writes the three compiled-in default sprites into `<dir>`.
+/// `gen <dir>` it writes the compiled-in default sprites into `<dir>`.
 fn cmd_sprite(args: &[String]) -> Result<(), String> {
     match args {
         [sub, dir] if sub == "gen" => {
@@ -238,6 +238,7 @@ fn cmd_sprite(args: &[String]) -> Result<(), String> {
                 ("wall.spr", sprite::Sprite::default_wall()),
                 ("floor.spr", sprite::Sprite::default_floor()),
                 ("player.spr", sprite::Sprite::default_player()),
+                ("item.spr", sprite::Sprite::default_item()),
             ];
             for (name, spr) in defaults {
                 let path = format!("{dir}/{name}");

@@ -216,6 +216,12 @@ impl Sprite {
     pub fn default_player() -> Sprite {
         Sprite::from_rows(8, &[0x3C, 0x42, 0x9D, 0xA5, 0xA5, 0x9E, 0x40, 0x3C])
     }
+
+    /// Default 8×8 item sprite: a solid diamond/gem, distinct from the player
+    /// `@` and from the floor's single center dot.
+    pub fn default_item() -> Sprite {
+        Sprite::from_rows(8, &[0x18, 0x3C, 0x7E, 0xFF, 0x7E, 0x3C, 0x18, 0x00])
+    }
 }
 
 /// The palette: maps the two 1-bit values, per tile role, to `0x00RR_GGBB`
@@ -230,6 +236,9 @@ pub struct Palette {
     pub floor_paper: u32,
     /// The player figure's ink; its paper is transparent (floor shows through).
     pub player_ink: u32,
+    /// The item gem's ink; like the player, its paper is transparent (floor
+    /// shows through the gaps of the diamond).
+    pub item_ink: u32,
 }
 
 impl Palette {
@@ -240,6 +249,7 @@ impl Palette {
         floor_ink: 0x0016_1622,  // subtle floor dot
         floor_paper: 0x000A_0A0F, // near-black floor
         player_ink: 0x00FF_B300, // bright amber
+        item_ink: 0x0000_E5FF,   // bright cyan gem
     };
 }
 
@@ -249,14 +259,15 @@ impl Default for Palette {
     }
 }
 
-/// The three role sprites the renderer needs. Loaded from files with a
-/// per-sprite fallback to the compiled-in defaults, so `play` always has a full
-/// set even if `sprites/` is missing or partial.
+/// The role sprites the renderer needs. Loaded from files with a per-sprite
+/// fallback to the compiled-in defaults, so `play` always has a full set even
+/// if `sprites/` is missing or partial.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sprites {
     pub wall: Sprite,
     pub floor: Sprite,
     pub player: Sprite,
+    pub item: Sprite,
 }
 
 impl Default for Sprites {
@@ -265,6 +276,7 @@ impl Default for Sprites {
             wall: Sprite::default_wall(),
             floor: Sprite::default_floor(),
             player: Sprite::default_player(),
+            item: Sprite::default_item(),
         }
     }
 }
@@ -273,8 +285,8 @@ impl Default for Sprites {
 pub const SPRITE_DIR: &str = "sprites";
 
 impl Sprites {
-    /// Load `wall.spr`, `floor.spr`, and `player.spr` from `dir`. Each sprite
-    /// that cannot be read or parsed falls back **individually** to its
+    /// Load `wall.spr`, `floor.spr`, `player.spr`, and `item.spr` from `dir`.
+    /// Each sprite that cannot be read or parsed falls back **individually** to its
     /// compiled-in default (so a missing or corrupt file never stops the game).
     /// Returns the set plus the list of human-readable fallback notes (empty if
     /// every file loaded cleanly) so the caller can report what happened.
@@ -299,7 +311,8 @@ impl Sprites {
         let wall = load_one("wall.spr", Sprite::default_wall(), &mut notes);
         let floor = load_one("floor.spr", Sprite::default_floor(), &mut notes);
         let player = load_one("player.spr", Sprite::default_player(), &mut notes);
-        (Sprites { wall, floor, player }, notes)
+        let item = load_one("item.spr", Sprite::default_item(), &mut notes);
+        (Sprites { wall, floor, player, item }, notes)
     }
 }
 
@@ -404,6 +417,23 @@ mod tests {
     fn missing_dir_falls_back_to_defaults() {
         let (sprites, notes) = Sprites::load_from_dir("/nonexistent-sprite-dir-xyz");
         assert_eq!(sprites, Sprites::default());
-        assert_eq!(notes.len(), 3); // all three fell back
+        assert_eq!(notes.len(), 4); // all four fell back
+    }
+
+    #[test]
+    fn item_sprite_round_trips_and_is_a_diamond() {
+        let s = Sprite::default_item();
+        // On-disk round-trip is byte-exact, like the other role sprites.
+        let bytes = s.to_bytes();
+        assert_eq!(bytes[3], 8); // width
+        assert_eq!(bytes[4], 8); // height
+        assert_eq!(Sprite::from_bytes(&bytes).unwrap(), s);
+        // Shape sanity: the widest row (3) is solid, the corners are paper, and
+        // the diamond is distinct from the player (its corners are ink).
+        for x in 0..8 {
+            assert!(s.get(x, 3), "item row 3 is the solid middle of the gem");
+        }
+        assert!(!s.get(0, 0), "item top-left corner is paper (transparent)");
+        assert!(s.get(3, 0), "item apex pixel is ink");
     }
 }

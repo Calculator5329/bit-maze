@@ -292,3 +292,13 @@ Tests: 20 new (7 VM opcode/cap tests, 6 replay-format unit tests, 1 PPM test, 2
 sample unit tests, 2 replay integration + 2 sample integration) on top of the 76
 prior — **96 total, all green**. `cargo build`, `cargo clippy --all-targets`
 clean, no new external crates. The project is **feature-complete**.
+
+**Post-Phase-7 polish: item sprite in the graphical renderer.** The ITEMS plane
+was collectible and shown as `*` in the terminal, but graphical mode (`framebuffer`
++ `sprite` + palette) had no item sprite, so items were invisible in the minifb
+window and `bitmaze shot`. Added an 8×8 `item` role (a solid cyan diamond gem,
+`Sprite::default_item`, `sprites/item.spr`) with `item_ink` (`0x0000E5FF`) and
+transparent paper, composited over floor exactly like the player (player still
+draws on top when standing on an item). `sprite gen` writes `item.spr`;
+`load_from_dir` gains per-file fallback for it. Two new tests (framebuffer item-ink
+pixel assertion + item sprite round-trip) → **98 total, all green**; clippy clean.
