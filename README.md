@@ -1,5 +1,9 @@
 # bit-maze
 
+[![Rust](https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+![Tests](https://img.shields.io/badge/tests-111%20passing-2ea44f?style=flat-square)
+![Runtime](https://img.shields.io/badge/runtime-fully%20offline-3178c6?style=flat-square)
+
 A tile game where **the game world *is* binary**. Maps, items, triggers, logic,
 sprites, and even recorded play sessions are packed bit-for-bit into files you
 can open in a hex editor. The engine is a small, dependency-lean Rust host
@@ -7,6 +11,11 @@ running a custom stack-based bytecode VM ("BitVM"). The theme — *everything is
 and 0s* — is the architecture, not decoration.
 
 Runs fully offline on Linux. No network at runtime, ever.
+
+![The trial level rendered directly from its packed bitplanes](docs/assets/trial-level.png)
+
+*The trial level rendered by the engine itself: walls, collectible bits, a
+one-shot trigger, and a hazard are all loaded from the packed `.bm` file.*
 
 A hand-authored 8×8 level is exactly 16 bytes:
 
@@ -51,6 +60,16 @@ BitVM), [`docs/ASM.md`](docs/ASM.md) (the assembler), and
 ```sh
 cargo build --release   # the only dependency is `minifb` for the window
 ```
+
+## Testing
+
+```sh
+cargo test
+```
+
+The suite currently contains **111 passing tests** across binary format
+validation, fuzz-style malformed input handling, the VM and assembler,
+deterministic replay, rendering, triggers, hazards, and complete win/lose paths.
 
 ## CLI
 
