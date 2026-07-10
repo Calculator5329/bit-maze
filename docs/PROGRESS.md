@@ -379,7 +379,7 @@ file plus complete winning and losing playthroughs. `npm run test:web`, the
 optimized `npm run build`, `cargo test` (111 tests), `cargo clippy --all-targets
 -- -D warnings`, and a headless Chromium production-page render all pass.
 The production build exports static assets to `dist/` and adds the hosting
-service's required dependency-free Node entrypoint plus copied project manifest.
+service's required Worker entrypoint plus copied project manifest.
 The local development command explicitly selects Next's development environment
 and retains the normal `.next/` directory; production builds alone use `dist/`
 for the hosting artifact, avoiding a dev-server/output-directory collision.
