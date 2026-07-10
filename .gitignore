@@ -1,4 +1,5 @@
 /target
 /node_modules
 /.next
+/dist
 /.openai/site-build.tar.gz
