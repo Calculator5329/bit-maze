@@ -1,7 +1,7 @@
 # bit-maze
 
 [![Rust](https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-![Tests](https://img.shields.io/badge/tests-111%20passing-2ea44f?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-112%20passing-2ea44f?style=flat-square)
 ![Runtime](https://img.shields.io/badge/runtime-fully%20offline-3178c6?style=flat-square)
 [![License: MIT](https://img.shields.io/badge/license-MIT-f2c744?style=flat-square)](LICENSE)
 
@@ -13,9 +13,13 @@ and 0s* — is the architecture, not decoration.
 
 Runs fully offline on Linux. No network at runtime, ever.
 
-The feedback build also has a browser front end for the `trial` level. It parses
-the same packed `.bm` bytes, renders the same 1-bit sprite patterns, and mirrors
-the deterministic movement, collection, hazard, and one-shot-trigger rules.
+The feedback build also has a browser front end for the `trial` level and the
+larger 24x16 `circuit` level. It parses the same packed `.bm` bytes, renders the
+same 1-bit sprite patterns, and mirrors the deterministic movement, collection,
+hazard, and one-shot-trigger rules.
+
+**Play the current private feedback build:**
+[bit-maze-trial.calculator-5329.chatgpt.site](https://bit-maze-trial.calculator-5329.chatgpt.site)
 
 ![The trial level rendered directly from its packed bitplanes](docs/assets/trial-level.png)
 
@@ -84,7 +88,7 @@ even if your shell has `NODE_ENV=production` or another non-standard value.
 cargo test
 ```
 
-The suite currently contains **111 passing tests** across binary format
+The suite currently contains **112 passing tests** across binary format
 validation, fuzz-style malformed input handling, the VM and assembler,
 deterministic replay, rendering, triggers, hazards, and complete win/lose paths.
 
@@ -101,7 +105,7 @@ bitmaze gen-levels <dir>                       write the built-in sample levels 
 bitmaze shot  <level.bm> <out.ppm> [tile_px]   render a level to a viewable P6 PPM image
 bitmaze asm   <in.asm> <out.bin>               assemble a script to raw bytecode
 bitmaze sprite <file.spr>                      dump a 1-bit sprite as ASCII (# ink / . paper)
-bitmaze sprite gen <dir>                       write the three default sprites into <dir>
+bitmaze sprite gen <dir>                       write the five default sprites into <dir>
 ```
 
 ### Examples
@@ -159,10 +163,16 @@ script (e.g. opening a gate).
   spike **hazard** + a **one-shot** plate (`trial.asm`) that opens a gate to the
   walled-off items. Collect all three while avoiding the spike to win; step on the
   spike to lose.
+- `levels/circuit.bm` — a 24x16, 555-byte three-sector maze with 12 items, 9
+  hazards, and two one-shot plates that open successive divider gates. This is
+  the default browser feedback level; switch back to Trial from the game panel.
 
-The garden/vault/trial levels are built by `src/samples.rs`, which embeds
+The garden/vault/trial/circuit levels are built by `src/samples.rs`, which embeds
 assembler-produced bytecode into the `.bm` script table; regenerate them with
 `bitmaze gen-levels levels`.
+
+See [`docs/SIZING.md`](docs/SIZING.md) for exact level-size formulas, build sizes,
+measured core throughput, framebuffer costs, and larger-map projections.
 
 ## Design rules (the guardrails)
 

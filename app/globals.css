@@ -46,6 +46,10 @@ h1 em { font-style: normal; color: var(--amber); }
 .terminal::after { content: ""; position: absolute; inset: 35px 0 89px; pointer-events: none; background: repeating-linear-gradient(0deg, rgba(255,255,255,.018) 0, rgba(255,255,255,.018) 1px, transparent 1px, transparent 4px); }
 .terminal-bar { min-height: 36px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); color: #697089; font-size: 9px; letter-spacing: .08em; }
 .terminal-state { color: #54e380; }.terminal.won .terminal-state { color: var(--cyan); }.terminal.lost .terminal-state { color: var(--red); }
+.level-tabs { display: flex; gap: 7px; padding: 10px 14px 0; }
+.level-tabs button { border: 1px solid #30364a; background: transparent; color: #687089; padding: 7px 10px; cursor: pointer; font-size: 8px; letter-spacing: .1em; }
+.level-tabs button:hover { color: var(--cyan); border-color: var(--cyan); }
+.level-tabs button.active { color: #071015; background: var(--cyan); border-color: var(--cyan); }
 .game-stage { position: relative; padding: 20px; }
 canvas { width: 100%; height: auto; display: block; image-rendering: pixelated; border: 1px solid #1e2333; background: #090b12; }
 .outcome { position: absolute; inset: 20px; display: grid; place-content: center; text-align: center; background: rgba(5,7,11,.78); backdrop-filter: blur(4px); z-index: 2; }

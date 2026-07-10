@@ -376,13 +376,28 @@ feedback are built into the game shell.
 
 Web verification adds a byte-for-byte assertion against the committed `.bm`
 file plus complete winning and losing playthroughs. `npm run test:web`, the
-optimized `npm run build`, `cargo test` (111 tests), `cargo clippy --all-targets
+optimized `npm run build`, `cargo test` (now 112 tests), `cargo clippy --all-targets
 -- -D warnings`, and a headless Chromium production-page render all pass.
 The production build exports static assets to `dist/` and adds the hosting
 service's required Worker entrypoint plus copied project manifest.
 The local development command explicitly selects Next's development environment
 and retains the normal `.next/` directory; production builds alone use `dist/`
 for the hosting artifact, avoiding a dev-server/output-directory collision.
+
+## Larger-level scaling pass
+
+Added `levels/circuit.bm`, a 24x16 three-sector level: 384 tiles, 12 items, 9
+hazards, and two one-shot plates whose independently assembled six-byte BitVM
+programs open successive divider gates. The complete level is 555 bytes. A
+reachability test treats hazards as blocked and proves the safe progression from
+spawn to plate A, through gate A to plate B, then through gate B to every item.
+
+The browser now reads the committed `.bm` files during the static build instead
+of duplicating level bytes in JavaScript, offers Trial/Circuit selection, sizes
+the pixel canvas adaptively, and opens on Circuit by default. Browser tests parse
+both committed files and execute both circuit gate scripts. `docs/SIZING.md`
+records the storage formula, exact artifact sizes, core microbenchmarks, and the
+point at which a viewport becomes preferable to full-map rendering.
 Docs updated: `FORMAT.md` (hazards plane), `VM.md` (`GET_HAZARD` + one-shot
 semantics), `SPRITE.md` (hazard role/palette), `README.md` (win/lose, hazards,
 one-shot, the trial), this log, and a `ROADMAP.md` Phase 8 note.

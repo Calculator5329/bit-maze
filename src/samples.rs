@@ -21,6 +21,9 @@ const GATE_ASM: &str = include_str!("../scripts/gate.asm");
 const VAULT_ASM: &str = include_str!("../scripts/vault.asm");
 /// The trial gate script (`scripts/trial.asm`), assembled at build time.
 const TRIAL_ASM: &str = include_str!("../scripts/trial.asm");
+/// The circuit's first and second gate scripts, assembled independently.
+const CIRCUIT_A_ASM: &str = include_str!("../scripts/circuit-a.asm");
+const CIRCUIT_B_ASM: &str = include_str!("../scripts/circuit-b.asm");
 
 /// Start an items-carrying level: a blank walls plane plus an empty items plane
 /// and a zeroed trigger plane, ready for the caller to paint.
@@ -130,9 +133,77 @@ pub fn trial() -> Level {
     level
 }
 
+/// The **circuit**: a 24×16 three-sector level with 12 items, 9 hazards, and
+/// two one-shot plates. Plate A at (5,2) opens divider gate (8,4), then plate B
+/// at (12,13) opens divider gate (16,11). It has eight times as many tiles as
+/// `trial`, making it the first sample intended to exercise larger-level
+/// storage and rendering while remaining compact and hand-inspectable.
+pub fn circuit() -> Level {
+    let (mut level, mut triggers) = base(24, 16);
+    level.planes.push(vec![0u8; plane_len(24, 16)]); // hazards plane
+    border(&mut level);
+
+    // Three sectors divided by full-height walls. Each has one scripted gate.
+    for y in 1..15 {
+        level.set_bit(WALLS_PLANE, 8, y, true);
+        level.set_bit(WALLS_PLANE, 16, y, true);
+    }
+
+    // Short walls turn each sector into a small maze without creating isolated
+    // pockets. The explicit gaps are the intended routes through each band.
+    for x in 2..=6 {
+        if x != 4 { level.set_bit(WALLS_PLANE, x, 6, true); }
+    }
+    for x in 2..=7 {
+        if x != 6 { level.set_bit(WALLS_PLANE, x, 10, true); }
+    }
+    for x in 10..=15 {
+        if x != 13 { level.set_bit(WALLS_PLANE, x, 5, true); }
+    }
+    for x in 9..=14 {
+        if x != 11 { level.set_bit(WALLS_PLANE, x, 9, true); }
+    }
+    for x in 18..=22 {
+        if x != 20 { level.set_bit(WALLS_PLANE, x, 6, true); }
+    }
+    for x in 17..=21 {
+        if x != 19 { level.set_bit(WALLS_PLANE, x, 10, true); }
+    }
+
+    for &(x, y) in &[
+        (3u8, 3u8), (6, 11), (2, 13),
+        (10, 2), (14, 4), (11, 8), (14, 13),
+        (18, 2), (21, 4), (19, 8), (21, 12), (18, 14),
+    ] {
+        level.set_bit(ITEMS_PLANE, x, y, true);
+    }
+
+    for &(x, y) in &[
+        (4u8, 4u8), (3, 8), (7, 13),
+        (11, 3), (14, 7), (10, 12),
+        (19, 3), (22, 8), (18, 12),
+    ] {
+        level.set_bit(HAZARDS_PLANE, x, y, true);
+    }
+
+    triggers[2 * 24 + 5] = 0x80; // plate A at (5,2)
+    triggers[13 * 24 + 12] = 0x81; // plate B at (12,13)
+    level.triggers = Some(triggers);
+    level.scripts = Some(vec![
+        Script { id: 0x80, bytes: asm::assemble(CIRCUIT_A_ASM).expect("circuit-a.asm assembles") },
+        Script { id: 0x81, bytes: asm::assemble(CIRCUIT_B_ASM).expect("circuit-b.asm assembles") },
+    ]);
+    level
+}
+
 /// Every sample, as `(filename, level)` pairs. `bitmaze gen-levels` writes each.
 pub fn all() -> Vec<(&'static str, Level)> {
-    vec![("garden.bm", garden()), ("vault.bm", vault()), ("trial.bm", trial())]
+    vec![
+        ("garden.bm", garden()),
+        ("vault.bm", vault()),
+        ("trial.bm", trial()),
+        ("circuit.bm", circuit()),
+    ]
 }
 
 #[cfg(test)]
@@ -167,7 +238,68 @@ mod tests {
     #[test]
     fn garden_gate_script_is_the_assembled_bytecode() {
         let level = garden();
-        let scripts = level.scripts.unwrap();
+        let scripts = level.scripts.as_ref().unwrap();
         assert_eq!(scripts[0].bytes, vec![0x10, 0x05, 0x10, 0x03, 0x32, 0x01]);
+    }
+
+    #[test]
+    fn circuit_has_expected_scale_and_gate_programs() {
+        let mut level = circuit();
+        assert_eq!((level.width, level.height), (24, 16));
+        assert_eq!(level.planes.len(), 3);
+        assert_eq!(level.planes[ITEMS_PLANE].iter().map(|b| b.count_ones()).sum::<u32>(), 12);
+        assert_eq!(level.planes[HAZARDS_PLANE].iter().map(|b| b.count_ones()).sum::<u32>(), 9);
+        let triggers = level.triggers.as_ref().unwrap();
+        assert_eq!(triggers[2 * 24 + 5], 0x80);
+        assert_eq!(triggers[13 * 24 + 12], 0x81);
+        let scripts = level.scripts.as_ref().unwrap();
+        assert_eq!(scripts[0].bytes, vec![0x10, 8, 0x10, 4, 0x32, 0x01]);
+        assert_eq!(scripts[1].bytes, vec![0x10, 16, 0x10, 11, 0x32, 0x01]);
+
+        // Treat hazards as blocked and prove the intended progression has safe
+        // routes: plate A, then plate B after gate A, then every collectible.
+        let reachable = |level: &Level, start: (u8, u8)| {
+            use std::collections::VecDeque;
+            let mut seen = vec![false; level.tile_count()];
+            let mut queue = VecDeque::from([start]);
+            while let Some((x, y)) = queue.pop_front() {
+                let idx = y as usize * level.width as usize + x as usize;
+                if seen[idx]
+                    || level.get_bit(WALLS_PLANE, x, y)
+                    || level.get_bit(HAZARDS_PLANE, x, y)
+                {
+                    continue;
+                }
+                seen[idx] = true;
+                for (nx, ny) in [
+                    (x.wrapping_sub(1), y),
+                    (x.saturating_add(1), y),
+                    (x, y.wrapping_sub(1)),
+                    (x, y.saturating_add(1)),
+                ] {
+                    if nx < level.width && ny < level.height {
+                        queue.push_back((nx, ny));
+                    }
+                }
+            }
+            seen
+        };
+        let can_reach = |seen: &[bool], level: &Level, x: u8, y: u8| {
+            seen[y as usize * level.width as usize + x as usize]
+        };
+        let first = reachable(&level, (1, 1));
+        assert!(can_reach(&first, &level, 5, 2), "plate A has a safe route");
+        level.set_bit(WALLS_PLANE, 8, 4, false);
+        let second = reachable(&level, (1, 1));
+        assert!(can_reach(&second, &level, 12, 13), "plate B is reachable after gate A");
+        level.set_bit(WALLS_PLANE, 16, 11, false);
+        let final_map = reachable(&level, (1, 1));
+        for y in 0..level.height {
+            for x in 0..level.width {
+                if level.get_bit(ITEMS_PLANE, x, y) {
+                    assert!(can_reach(&final_map, &level, x, y), "item ({x},{y}) has a safe route");
+                }
+            }
+        }
     }
 }

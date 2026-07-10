@@ -10,26 +10,53 @@ const DIRECTIONS = {
   ArrowRight: [1, 0], d: [1, 0], D: [1, 0],
 };
 
-export default function BitMazeGame() {
+const LEVELS = {
+  trial: {
+    label: "TRIAL",
+    file: "TRIAL.BM",
+    description: "Recover 3 cyan bits. One violet plate opens the sealed gate.",
+  },
+  circuit: {
+    label: "CIRCUIT 24×16",
+    file: "CIRCUIT.BM",
+    description: "Recover 12 bits across three sectors. Two plates open the divider gates.",
+  },
+};
+
+function noticeFor(game, levelId) {
+  if (game.state === "won") return "MAZE RESOLVED // all bits recovered";
+  if (game.state === "lost") return "SIGNAL LOST // the red spike is fatal";
+  if (game.fired.size) {
+    const totalGates = levelId === "circuit" ? 2 : 1;
+    return `Gate bit flipped: ${game.fired.size} / ${totalGates} passage${totalGates > 1 ? "s" : ""} open.`;
+  }
+  return LEVELS[levelId].description;
+}
+
+export default function BitMazeGame({ levelData }) {
   const canvasRef = useRef(null);
-  const engineRef = useRef(new Engine());
-  const [snapshot, setSnapshot] = useState({ score: 0, total: 3, state: "playing", moves: 0 });
-  const [notice, setNotice] = useState("Collect all 3 bits. The violet plate opens the sealed gate.");
+  const engineRef = useRef(null);
+  if (!engineRef.current) engineRef.current = new Engine(Uint8Array.from(levelData.circuit));
+  const [activeLevel, setActiveLevel] = useState("circuit");
+  const [snapshot, setSnapshot] = useState({ score: 0, total: 12, state: "playing", moves: 0, width: 24, height: 16 });
+  const [notice, setNotice] = useState(LEVELS.circuit.description);
 
   const paint = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    drawGame(canvas.getContext("2d"), engineRef.current, 8);
+    const game = engineRef.current;
+    const scale = Math.min(8, Math.max(2, Math.floor(768 / (game.width * 8))));
+    canvas.width = game.width * 8 * scale;
+    canvas.height = game.height * 8 * scale;
+    drawGame(canvas.getContext("2d"), game, scale);
   }, []);
 
   const sync = useCallback(() => {
     const game = engineRef.current;
-    setSnapshot({ score: game.score, total: game.totalItems, state: game.state, moves: game.moves });
-    if (game.state === "won") setNotice("MAZE RESOLVED // all bits recovered");
-    else if (game.state === "lost") setNotice("SIGNAL LOST // the red spike is fatal");
-    else setNotice(game.fired.size ? "Gate bit flipped: 1 → 0. The passage is open." : "Collect all 3 bits. The violet plate opens the sealed gate.");
+    setSnapshot({ score: game.score, total: game.totalItems, state: game.state, moves: game.moves, width: game.width, height: game.height });
+    setNotice(noticeFor(game, activeLevel));
     paint();
-  }, [paint]);
+  }, [activeLevel, paint]);
 
   const move = useCallback((dx, dy) => {
     engineRef.current.move(dx, dy);
@@ -37,10 +64,18 @@ export default function BitMazeGame() {
   }, [sync]);
 
   const reset = useCallback(() => {
-    engineRef.current = new Engine();
-    setNotice("Collect all 3 bits. The violet plate opens the sealed gate.");
+    engineRef.current = new Engine(Uint8Array.from(levelData[activeLevel]));
     sync();
-  }, [sync]);
+  }, [activeLevel, levelData, sync]);
+
+  const selectLevel = useCallback((levelId) => {
+    const game = new Engine(Uint8Array.from(levelData[levelId]));
+    engineRef.current = game;
+    setActiveLevel(levelId);
+    setSnapshot({ score: 0, total: game.totalItems, state: "playing", moves: 0, width: game.width, height: game.height });
+    setNotice(LEVELS[levelId].description);
+    requestAnimationFrame(paint);
+  }, [levelData, paint]);
 
   useEffect(() => { paint(); }, [paint]);
   useEffect(() => {
@@ -63,14 +98,14 @@ export default function BitMazeGame() {
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /><i /><i /></span>
           <span>bit-maze</span>
         </a>
-        <div className="build-tag"><span className="pulse" /> TRIAL_BUILD 0.1</div>
+        <div className="build-tag"><span className="pulse" /> WORLD_BUILD 0.2</div>
       </header>
 
       <section className="hero">
         <div className="intro">
           <p className="eyebrow">A WORLD MADE OF BITS</p>
           <h1>Find the path.<br /><em>Flip the world.</em></h1>
-          <p className="lede">Every wall, item, hazard, trigger, and pixel below comes from compact binary data. Recover the cyan bits without touching the red signal.</p>
+          <p className="lede">Every wall, item, hazard, trigger, and pixel below comes from compact binary data. Choose the 48-tile trial or the new 384-tile circuit.</p>
           <div className="legend" aria-label="Game legend">
             <span><b className="swatch player" /> YOU</span>
             <span><b className="swatch item" /> BIT</span>
@@ -81,11 +116,16 @@ export default function BitMazeGame() {
 
         <div className={`terminal ${snapshot.state}`} id="game">
           <div className="terminal-bar">
-            <span>BM://LEVELS/TRIAL.BM</span>
+            <span>BM://LEVELS/{LEVELS[activeLevel].file}</span>
             <span className="terminal-state">● {statusLabel}</span>
           </div>
+          <div className="level-tabs" aria-label="Select level">
+            {Object.entries(LEVELS).map(([id, level]) => (
+              <button key={id} className={activeLevel === id ? "active" : ""} onClick={() => selectLevel(id)}>{level.label}</button>
+            ))}
+          </div>
           <div className="game-stage">
-            <canvas ref={canvasRef} width="512" height="384" aria-label="Bit Maze game board" />
+            <canvas ref={canvasRef} width="512" height="384" aria-label={`${LEVELS[activeLevel].label} Bit Maze game board`} />
             {snapshot.state !== "playing" && (
               <div className="outcome">
                 <strong>{snapshot.state === "won" ? "YOU WIN" : "GAME OVER"}</strong>
@@ -118,7 +158,7 @@ export default function BitMazeGame() {
       </section>
 
       <footer>
-        <span>FORMAT: BM/V1</span><span>PLANES: 3</span><span>LOGIC: BITVM</span><span>RUNTIME: DETERMINISTIC</span>
+        <span>FORMAT: BM/V1</span><span>GRID: {snapshot.width}×{snapshot.height}</span><span>PLANES: 3</span><span>LOGIC: BITVM</span><span>RUNTIME: DETERMINISTIC</span>
       </footer>
     </main>
   );
