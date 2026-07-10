@@ -3,6 +3,7 @@
 [![Rust](https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 ![Tests](https://img.shields.io/badge/tests-111%20passing-2ea44f?style=flat-square)
 ![Runtime](https://img.shields.io/badge/runtime-fully%20offline-3178c6?style=flat-square)
+[![License: MIT](https://img.shields.io/badge/license-MIT-f2c744?style=flat-square)](LICENSE)
 
 A tile game where **the game world *is* binary**. Maps, items, triggers, logic,
 sprites, and even recorded play sessions are packed bit-for-bit into files you
@@ -180,3 +181,7 @@ terminal and `minifb` front-ends; the BitVM (21 opcodes, incl. `GET_HAZARD`) wit
 triggers and a **one-shot latch**; the ≤300-line assembler; 1-bit sprites +
 palette; deterministic replays; and PPM screenshot export. See
 [`docs/PROGRESS.md`](docs/PROGRESS.md).
+
+## License
+
+[MIT](LICENSE) © 2026 Ethan Gates.
