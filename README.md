@@ -75,6 +75,8 @@ npm run test:web         # parser + complete win/lose routes
 ```
 
 The web front end supports W/A/S/D, arrow keys, and an on-screen direction pad.
+`npm run dev` explicitly sets `NODE_ENV=development`, so it remains reliable
+even if your shell has `NODE_ENV=production` or another non-standard value.
 
 ## Testing
 
