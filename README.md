@@ -12,6 +12,10 @@ and 0s* — is the architecture, not decoration.
 
 Runs fully offline on Linux. No network at runtime, ever.
 
+The feedback build also has a browser front end for the `trial` level. It parses
+the same packed `.bm` bytes, renders the same 1-bit sprite patterns, and mirrors
+the deterministic movement, collection, hazard, and one-shot-trigger rules.
+
 ![The trial level rendered directly from its packed bitplanes](docs/assets/trial-level.png)
 
 *The trial level rendered by the engine itself: walls, collectible bits, a
@@ -60,6 +64,16 @@ BitVM), [`docs/ASM.md`](docs/ASM.md) (the assembler), and
 ```sh
 cargo build --release   # the only dependency is `minifb` for the window
 ```
+
+### Browser feedback build
+
+```sh
+npm install
+npm run dev              # open http://localhost:3000
+npm run test:web         # parser + complete win/lose routes
+```
+
+The web front end supports W/A/S/D, arrow keys, and an on-screen direction pad.
 
 ## Testing
 

@@ -361,6 +361,23 @@ the existing committed-file check covers it. **111 total, all green** (98 prior 
 13); `cargo build` + `cargo clippy --all-targets` clean; no new external crates.
 One existing test intentionally relaxed: `samples.rs::samples_are_valid_and_reparse`
 asserted exactly 2 planes → now `>= 2`, because `trial` adds the hazards plane.
+
+## Browser feedback build
+
+Added a responsive Next.js front end for the `trial` level so the game can be
+played from a shared link as well as through the native Rust binary. The browser
+engine parses the exact committed `levels/trial.bm` byte payload and mirrors the
+deterministic world rules: wall collision, item collection, hazards, terminal
+win/lose state, the one-shot trigger latch, and the BitVM gate script. Rendering
+uses the same packed 8x8 sprite rows and palette, with a visible violet plate to
+make the trigger discoverable during playtesting. Controls cover W/A/S/D, arrow
+keys, and touch/click input; reset, move count, score, state, and contextual
+feedback are built into the game shell.
+
+Web verification adds a byte-for-byte assertion against the committed `.bm`
+file plus complete winning and losing playthroughs. `npm run test:web`, the
+optimized `npm run build`, `cargo test` (111 tests), `cargo clippy --all-targets
+-- -D warnings`, and a headless Chromium production-page render all pass.
 Docs updated: `FORMAT.md` (hazards plane), `VM.md` (`GET_HAZARD` + one-shot
 semantics), `SPRITE.md` (hazard role/palette), `README.md` (win/lose, hazards,
 one-shot, the trial), this log, and a `ROADMAP.md` Phase 8 note.
