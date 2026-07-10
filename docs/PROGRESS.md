@@ -398,6 +398,18 @@ the pixel canvas adaptively, and opens on Circuit by default. Browser tests pars
 both committed files and execute both circuit gate scripts. `docs/SIZING.md`
 records the storage formula, exact artifact sizes, core microbenchmarks, and the
 point at which a viewport becomes preferable to full-map rendering.
+
+## Live Bit Inspector
+
+Added the browser companion view that makes the binary architecture observable
+during play. It renders the live walls, items, and hazards planes as aligned
+`0`/`1` matrices; outlines the player's current address; derives `index`, byte,
+MSB-first bit, and mask; and shows the current trigger byte. A BitVM panel keeps
+the most recently executed script as both raw hex and decoded operations, while
+an event trace records movement, blocking, item clears, gate programs, and
+terminal state changes. Collecting an item or opening a gate flashes the exact
+plane bit mutated from `1` to `0`. Pure inspector helpers have browser tests for
+tile addressing and six-byte gate-program decoding.
 Docs updated: `FORMAT.md` (hazards plane), `VM.md` (`GET_HAZARD` + one-shot
 semantics), `SPRITE.md` (hazard role/palette), `README.md` (win/lose, hazards,
 one-shot, the trial), this log, and a `ROADMAP.md` Phase 8 note.

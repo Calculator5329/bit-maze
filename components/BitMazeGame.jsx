@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BitMazeGame as Engine, drawGame } from "../lib/bitmaze";
+import { BitMazeGame as Engine, decodeGateScript, drawGame, inspectTile } from "../lib/bitmaze";
 
 const DIRECTIONS = {
   ArrowUp: [0, -1], w: [0, -1], W: [0, -1],
@@ -33,13 +33,103 @@ function noticeFor(game, levelId) {
   return LEVELS[levelId].description;
 }
 
+const hex = (value, width = 2) => `0x${value.toString(16).toUpperCase().padStart(width, "0")}`;
+
+function BitPlane({ game, plane, label, tone, flash }) {
+  const address = inspectTile(game);
+  const data = address.planes[plane];
+  const tileCount = game.width * game.height;
+  return (
+    <article className={`plane-card ${tone}`}>
+      <header>
+        <div><span>PLANE {plane}</span><strong>{label}</strong></div>
+        <code>BYTE[{address.byteIndex}] = {data.binary}</code>
+      </header>
+      <div
+        className="bit-grid"
+        style={{ "--bit-cols": game.width, "--bit-size": game.width > 12 ? "13px" : "22px" }}
+        aria-label={`${label} bitplane`}
+      >
+        {Array.from({ length: tileCount }, (_, index) => {
+          const x = index % game.width;
+          const y = Math.floor(index / game.width);
+          const value = game.getBit(plane, x, y) ? 1 : 0;
+          const classes = [
+            "bit-cell",
+            value ? "set" : "",
+            index === address.index ? "current" : "",
+            flash.has(`${plane}:${index}`) ? "changed" : "",
+          ].filter(Boolean).join(" ");
+          return <span className={classes} key={index}>{value}</span>;
+        })}
+      </div>
+    </article>
+  );
+}
+
+function BitInspector({ game, flash, lastVm, events }) {
+  const tile = inspectTile(game);
+  const currentBytes = tile.script ? [...tile.script].map((byte) => hex(byte)).join(" ") : "—";
+  const vm = lastVm ?? (tile.script ? {
+    id: tile.trigger,
+    bytes: currentBytes,
+    decoded: decodeGateScript(tile.script),
+  } : null);
+
+  return (
+    <section className="inspector" aria-label="Live bit inspector">
+      <div className="inspector-heading">
+        <div>
+          <p className="eyebrow">LIVE MEMORY VIEW</p>
+          <h2>Watch the bits work</h2>
+        </div>
+        <p>The amber outline is your current tile. Cyan, red, and slate <b>1</b>s are set bits. Mutations flash when a collectible clears or BitVM opens a gate.</p>
+      </div>
+
+      <div className="address-strip">
+        <div><small>COORDINATE</small><strong>({tile.x}, {tile.y})</strong></div>
+        <div><small>TILE INDEX</small><strong>{tile.index}</strong><code>y × {game.width} + x</code></div>
+        <div><small>BYTE ADDRESS</small><strong>{tile.byteIndex}</strong><code>floor(index / 8)</code></div>
+        <div><small>BIT / MASK</small><strong>{tile.bitIndex} / {hex(tile.mask)}</strong><code>MSB-first</code></div>
+        <div><small>TRIGGER BYTE</small><strong>{hex(tile.trigger)}</strong><code>trigger[{tile.index}]</code></div>
+      </div>
+
+      <div className="inspector-planes">
+        <BitPlane game={game} plane={0} label="WALLS" tone="walls" flash={flash} />
+        <BitPlane game={game} plane={1} label="ITEMS" tone="items" flash={flash} />
+        <BitPlane game={game} plane={2} label="HAZARDS" tone="hazards" flash={flash} />
+      </div>
+
+      <div className="inspector-lower">
+        <article className="vm-card">
+          <header><span>BITVM TRACE</span><strong>{vm ? `SCRIPT ${hex(vm.id)}` : "IDLE"}</strong></header>
+          <code className="vm-bytes">{vm?.bytes ?? "Step onto a violet plate to execute bytecode."}</code>
+          <p>{vm?.decoded?.text ?? "No gate program has executed in this run."}</p>
+          {vm?.decoded && <p className="mutation">WALLS[{vm.decoded.x},{vm.decoded.y}] &nbsp; 1 → 0</p>}
+        </article>
+        <article className="event-card">
+          <header><span>EVENT TRACE</span><strong>NEWEST FIRST</strong></header>
+          <ol>
+            {events.map((event) => <li key={event.id}><i>&gt;</i> {event.text}</li>)}
+          </ol>
+        </article>
+      </div>
+    </section>
+  );
+}
+
 export default function BitMazeGame({ levelData }) {
   const canvasRef = useRef(null);
   const engineRef = useRef(null);
+  const eventSequence = useRef(0);
+  const flashTimer = useRef(null);
   if (!engineRef.current) engineRef.current = new Engine(Uint8Array.from(levelData.circuit));
   const [activeLevel, setActiveLevel] = useState("circuit");
   const [snapshot, setSnapshot] = useState({ score: 0, total: 12, state: "playing", moves: 0, width: 24, height: 16 });
   const [notice, setNotice] = useState(LEVELS.circuit.description);
+  const [events, setEvents] = useState([{ id: 0, text: "LOAD CIRCUIT.BM · 555 bytes · 3 bitplanes" }]);
+  const [flash, setFlash] = useState(new Set());
+  const [lastVm, setLastVm] = useState(null);
 
   const paint = useCallback(() => {
     const canvas = canvasRef.current;
@@ -59,12 +149,48 @@ export default function BitMazeGame({ levelData }) {
   }, [activeLevel, paint]);
 
   const move = useCallback((dx, dy) => {
-    engineRef.current.move(dx, dy);
+    const game = engineRef.current;
+    const before = { x: game.x, y: game.y, score: game.score, fired: game.fired.size };
+    const result = game.move(dx, dy);
+    const entries = [];
+    const changed = [];
+    if (result === "blocked") {
+      entries.push(`BLOCK (${before.x + dx},${before.y + dy}) · wall or edge`);
+    } else if (game.x !== before.x || game.y !== before.y) {
+      const tile = inspectTile(game);
+      entries.push(`MOVE (${game.x},${game.y}) · idx ${tile.index} · byte ${tile.byteIndex} · mask ${hex(tile.mask)}`);
+      if (game.score > before.score) {
+        changed.push(`1:${tile.index}`);
+        entries.push(`ITEMS[${game.x},${game.y}] 1 → 0 · score ${game.score}/${game.totalItems}`);
+      }
+      if (game.fired.size > before.fired) {
+        const id = game.triggerAt(game.x, game.y);
+        const script = game.level.scripts.get(id);
+        const decoded = decodeGateScript(script);
+        setLastVm({ id, bytes: [...script].map((byte) => hex(byte)).join(" "), decoded });
+        entries.push(`VM ${hex(id)} · ${decoded?.text ?? "script executed"}`);
+        if (decoded) changed.push(`0:${decoded.y * game.width + decoded.x}`);
+      }
+      if (game.state === "lost") entries.push("HAZARDS bit = 1 · state PLAYING → LOST");
+      if (game.state === "won") entries.push("remaining ITEMS bits = 0 · state PLAYING → WON");
+    }
+    if (entries.length) {
+      const tagged = entries.map((text) => ({ id: ++eventSequence.current, text })).reverse();
+      setEvents((previous) => [...tagged, ...previous].slice(0, 8));
+    }
+    if (changed.length) {
+      setFlash(new Set(changed));
+      if (flashTimer.current) window.clearTimeout(flashTimer.current);
+      flashTimer.current = window.setTimeout(() => setFlash(new Set()), 900);
+    }
     sync();
   }, [sync]);
 
   const reset = useCallback(() => {
     engineRef.current = new Engine(Uint8Array.from(levelData[activeLevel]));
+    setEvents([{ id: ++eventSequence.current, text: `RESET ${LEVELS[activeLevel].file} · runtime bits restored` }]);
+    setFlash(new Set());
+    setLastVm(null);
     sync();
   }, [activeLevel, levelData, sync]);
 
@@ -74,6 +200,9 @@ export default function BitMazeGame({ levelData }) {
     setActiveLevel(levelId);
     setSnapshot({ score: 0, total: game.totalItems, state: "playing", moves: 0, width: game.width, height: game.height });
     setNotice(LEVELS[levelId].description);
+    setEvents([{ id: ++eventSequence.current, text: `LOAD ${LEVELS[levelId].file} · ${levelData[levelId].length} bytes · 3 bitplanes` }]);
+    setFlash(new Set());
+    setLastVm(null);
     requestAnimationFrame(paint);
   }, [levelData, paint]);
 
@@ -98,7 +227,7 @@ export default function BitMazeGame({ levelData }) {
           <span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /><i /><i /></span>
           <span>bit-maze</span>
         </a>
-        <div className="build-tag"><span className="pulse" /> WORLD_BUILD 0.2</div>
+        <div className="build-tag"><span className="pulse" /> WORLD_BUILD 0.3</div>
       </header>
 
       <section className="hero">
@@ -156,6 +285,8 @@ export default function BitMazeGame({ levelData }) {
           <button aria-label="Move right" onClick={() => move(1, 0)}>→<span>D</span></button>
         </div>
       </section>
+
+      <BitInspector game={engineRef.current} flash={flash} lastVm={lastVm} events={events} />
 
       <footer>
         <span>FORMAT: BM/V1</span><span>GRID: {snapshot.width}×{snapshot.height}</span><span>PLANES: 3</span><span>LOGIC: BITVM</span><span>RUNTIME: DETERMINISTIC</span>

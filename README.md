@@ -82,6 +82,12 @@ The web front end supports W/A/S/D, arrow keys, and an on-screen direction pad.
 `npm run dev` explicitly sets `NODE_ENV=development`, so it remains reliable
 even if your shell has `NODE_ENV=production` or another non-standard value.
 
+Below the controls, the live **Bit Inspector** exposes the representation while
+you play: the complete walls/items/hazards bitplanes, the current tile's linear
+index, byte address, MSB-first bit and mask, trigger byte, decoded gate program,
+and a newest-first event trace. Item and gate mutations flash at the exact bit
+that changed, connecting the rendered maze to its packed state.
+
 ## Testing
 
 ```sh

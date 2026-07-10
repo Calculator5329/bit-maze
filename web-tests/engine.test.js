@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { BitMazeGame, parseLevel } from "../lib/bitmaze.js";
+import { BitMazeGame, decodeGateScript, inspectTile, parseLevel } from "../lib/bitmaze.js";
 
 const trialBytes = fs.readFileSync("levels/trial.bm");
 const circuitBytes = fs.readFileSync("levels/circuit.bm");
@@ -52,4 +52,20 @@ test("browser engine parses the 24x16 circuit and both gate scripts", () => {
   game.x = 12; game.y = 13;
   assert.equal(game.fireTrigger(), true);
   assert.equal(game.getBit(0, 16, 11), false);
+});
+
+test("bit inspector exposes tile addressing and decodes gate bytecode", () => {
+  const game = new BitMazeGame(circuitBytes);
+  game.x = 5; game.y = 2;
+  const tile = inspectTile(game);
+  assert.deepEqual(
+    { index: tile.index, byteIndex: tile.byteIndex, bitIndex: tile.bitIndex, mask: tile.mask, trigger: tile.trigger },
+    { index: 53, byteIndex: 6, bitIndex: 2, mask: 0x04, trigger: 0x80 },
+  );
+  assert.equal(tile.planes[0].binary.length, 8);
+  assert.deepEqual(decodeGateScript(tile.script), {
+    x: 8,
+    y: 4,
+    text: "PUSH8 8  →  PUSH8 4  →  CLR_WALL  →  HALT",
+  });
 });
