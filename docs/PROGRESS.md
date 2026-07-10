@@ -378,6 +378,8 @@ Web verification adds a byte-for-byte assertion against the committed `.bm`
 file plus complete winning and losing playthroughs. `npm run test:web`, the
 optimized `npm run build`, `cargo test` (111 tests), `cargo clippy --all-targets
 -- -D warnings`, and a headless Chromium production-page render all pass.
+The production build exports static assets to `dist/` and adds the hosting
+service's required dependency-free Node entrypoint plus copied project manifest.
 Docs updated: `FORMAT.md` (hazards plane), `VM.md` (`GET_HAZARD` + one-shot
 semantics), `SPRITE.md` (hazard role/palette), `README.md` (win/lose, hazards,
 one-shot, the trial), this log, and a `ROADMAP.md` Phase 8 note.
